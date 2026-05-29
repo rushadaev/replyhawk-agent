@@ -4,7 +4,7 @@
 // Lifecycle: agent.connect('yelp') launches Chrome (user logs in once). After that
 // watchYelp() can be turned on; it runs in the main process indefinitely until paused.
 
-import { chromium, BrowserContext } from 'playwright-core';
+import { chromium, BrowserContext, Page } from 'playwright-core';
 import { extractInbox, extractMessages, extractLeadDetails, type YelpInboxItem } from '../extractors/yelp';
 import { postLead, postEvent } from '../cloudClient';
 
@@ -77,30 +77,37 @@ export class YelpWatcher {
   private async pollOnce(): Promise<void> {
     if (!this.bizEncid) return;
     await this.withContext(async (ctx) => {
+      // Reuse one background tab for the entire poll cycle to avoid spawning
+      // dozens of visible tabs on first run.
       const page = await ctx.newPage();
-      await page.goto(`https://biz.yelp.com/leads_center/${this.bizEncid}/leads`, { waitUntil: 'domcontentloaded' });
-      const state = await page.evaluate(() => (window as unknown as { yelp?: { react_apollo_state?: Record<string, unknown> } }).yelp?.react_apollo_state || null);
-      await page.close();
-      if (!state) throw new Error('Apollo state not found — login expired?');
-      const items = extractInbox(state as Record<string, Record<string, unknown>>, this.bizEncid!);
-      const changed: YelpInboxItem[] = [];
-      for (const it of items) {
-        const prev = this.snapshot.get(it.leadEncid);
-        if (!prev) changed.push(it);
-        else if (prev.lastEventTime !== it.lastEventTime && it.latestIsCustomer) changed.push(it);
-        this.snapshot.set(it.leadEncid, { encid: it.leadEncid, lastEventTime: it.lastEventTime });
-      }
-      for (const it of changed) {
-        await this.ingestLead(ctx, it);
+      try {
+        await page.goto(`https://biz.yelp.com/leads_center/${this.bizEncid}/leads`, { waitUntil: 'domcontentloaded' });
+        const state = await page.evaluate(() => (window as unknown as { yelp?: { react_apollo_state?: Record<string, unknown> } }).yelp?.react_apollo_state || null);
+        if (!state) throw new Error('Apollo state not found — login expired?');
+        const items = extractInbox(state as Record<string, Record<string, unknown>>, this.bizEncid!);
+        const isFirstRun = this.snapshot.size === 0;
+        const changed: YelpInboxItem[] = [];
+        for (const it of items) {
+          const prev = this.snapshot.get(it.leadEncid);
+          if (!prev) changed.push(it);
+          else if (prev.lastEventTime !== it.lastEventTime && it.latestIsCustomer) changed.push(it);
+          this.snapshot.set(it.leadEncid, { encid: it.leadEncid, lastEventTime: it.lastEventTime });
+        }
+        // On the very first run, just record the snapshot — don't backfill the entire
+        // existing inbox. The user can manually ingest historical leads later if they want.
+        if (isFirstRun) return;
+        for (const it of changed) {
+          await this.ingestLead(page, it);
+        }
+      } finally {
+        await page.close().catch(() => undefined);
       }
     });
   }
 
-  private async ingestLead(ctx: BrowserContext, it: YelpInboxItem): Promise<void> {
-    const page = await ctx.newPage();
+  private async ingestLead(page: Page, it: YelpInboxItem): Promise<void> {
     await page.goto(it.url, { waitUntil: 'domcontentloaded' });
     const state = await page.evaluate(() => (window as unknown as { yelp?: { react_apollo_state?: Record<string, unknown> } }).yelp?.react_apollo_state || null);
-    await page.close();
     if (!state) return;
     const s = state as Record<string, Record<string, unknown>>;
     const details = extractLeadDetails(s);
