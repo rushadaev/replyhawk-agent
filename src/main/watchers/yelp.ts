@@ -10,6 +10,8 @@ import { postLead, postEvent } from '../cloudClient';
 
 interface SnapshotEntry { encid: string; lastEventTime: string | null }
 
+export interface PollLog { at: number; ingested: number; total: number; note?: string }
+
 export class YelpWatcher {
   private timer: NodeJS.Timeout | null = null;
   private snapshot = new Map<string, SnapshotEntry>();
@@ -18,8 +20,26 @@ export class YelpWatcher {
   status: 'idle' | 'connecting' | 'watching' | 'error' = 'idle';
   lastError?: string;
   lastTick?: number;
+  log: PollLog[] = [];
 
   constructor(cdpPort: number) { this.cdpPort = cdpPort; }
+
+  recent(n = 10): PollLog[] { return this.log.slice(0, n); }
+
+  // Manual one-shot poll, used by the "Poll now" button.
+  async pollNow(): Promise<{ ok: true; ingested: number; total: number } | { ok: false; error: string }> {
+    try {
+      if (!this.bizEncid) {
+        const d = await this.detectBizEncid();
+        if (!d) throw new Error('No Yelp tab found — open biz.yelp.com first');
+        this.bizEncid = d;
+      }
+      const result = await this.pollOnceWithResult();
+      return { ok: true, ingested: result.ingested, total: result.total };
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
+  }
 
   setBiz(encid: string): void { this.bizEncid = encid; }
   getBiz(): string | null { return this.bizEncid; }
@@ -51,8 +71,18 @@ export class YelpWatcher {
     this.status = 'connecting';
     const ms = Math.max(15, intervalSec) * 1000;
     const tick = async (): Promise<void> => {
-      try { await this.pollOnce(); this.status = 'watching'; this.lastTick = Date.now(); }
-      catch (e) { this.status = 'error'; this.lastError = (e as Error).message; }
+      try {
+        const r = await this.pollOnceWithResult();
+        this.status = 'watching';
+        this.lastTick = Date.now();
+        this.lastError = undefined;
+        this.log.unshift({ at: this.lastTick, ingested: r.ingested, total: r.total });
+        if (this.log.length > 50) this.log.length = 50;
+      } catch (e) {
+        this.status = 'error';
+        this.lastError = (e as Error).message;
+        this.log.unshift({ at: Date.now(), ingested: 0, total: 0, note: `ERROR: ${this.lastError}` });
+      }
     };
     await tick();
     this.timer = setInterval(tick, ms);
@@ -74,7 +104,14 @@ export class YelpWatcher {
     }
   }
 
-  private async pollOnce(): Promise<void> {
+  // Wrapper so both the interval tick and the manual "Poll now" share the same body.
+  private async pollOnceWithResult(): Promise<{ ingested: number; total: number }> {
+    let ingested = 0; let total = 0;
+    await this.pollOnceInternal((n, t) => { ingested = n; total = t; });
+    return { ingested, total };
+  }
+
+  private async pollOnceInternal(report: (ingested: number, total: number) => void): Promise<void> {
     if (!this.bizEncid) return;
     await this.withContext(async (ctx) => {
       // Reuse one background tab for the entire poll cycle to avoid spawning
@@ -93,8 +130,7 @@ export class YelpWatcher {
           else if (prev.lastEventTime !== it.lastEventTime && it.latestIsCustomer) changed.push(it);
           this.snapshot.set(it.leadEncid, { encid: it.leadEncid, lastEventTime: it.lastEventTime });
         }
-        // On the very first run, just record the snapshot — don't backfill the entire
-        // existing inbox. The user can manually ingest historical leads later if they want.
+        report(isFirstRun ? 0 : changed.length, items.length);
         if (isFirstRun) return;
         for (const it of changed) {
           await this.ingestLead(page, it);

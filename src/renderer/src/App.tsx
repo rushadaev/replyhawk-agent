@@ -17,6 +17,7 @@ export default function App(): React.JSX.Element {
 
   const [chromes, setChromes] = useState<Array<{ platform: Source; running: boolean; hidden: boolean }>>([]);
   const [watcher, setWatcher] = useState<{ yelp: Status; thumbtack: Status } | null>(null);
+  const [yelpLog, setYelpLog] = useState<Array<{ at: number; ingested: number; total: number; note?: string }>>([]);
   const [yelpBiz, setYelpBiz] = useState<string | null>(null);
   const [busy, setBusy] = useState<Source | null>(null);
 
@@ -35,11 +36,11 @@ export default function App(): React.JSX.Element {
       const r = await window.api.cloud.heartbeat();
       const c = await window.api.chrome.list();
       const w = await window.api.watcher.status();
-      // Auto-detect Yelp biz encid from any open tab whenever Yelp Chrome is running
       const yelpRunning = c.find((x) => x.platform === 'yelp')?.running;
       const detected = yelpRunning ? await window.api.watcher.yelpDetect() : null;
+      const log = w.yelp.status !== 'idle' ? await window.api.watcher.yelpLog() : [];
       if (cancelled) return;
-      setHb(r); setChromes(c); setWatcher(w); setYelpBiz(detected);
+      setHb(r); setChromes(c); setWatcher(w); setYelpBiz(detected); setYelpLog(log);
     };
     tick();
     const t = setInterval(tick, 5_000);
@@ -136,6 +137,12 @@ export default function App(): React.JSX.Element {
         onStartWatch={() => onStartWatch('yelp')}
         onStopWatch={() => window.api.watcher.yelpStop()}
         onShowWindow={() => window.api.chrome.show('yelp')}
+        onPollNow={async () => {
+          const r = await window.api.watcher.yelpPollNow();
+          if (r.ok) alert(`Polled: ${r.ingested} new lead(s) ingested of ${r.total} total in inbox.`);
+          else alert(`Poll failed: ${r.error}`);
+        }}
+        log={yelpLog}
       />
 
       <SourceCard
@@ -170,6 +177,8 @@ function SourceCard(props: {
   onStartWatch: () => void;
   onStopWatch: () => void;
   onShowWindow: () => void;
+  onPollNow?: () => void;
+  log?: Array<{ at: number; ingested: number; total: number; note?: string }>;
 }): React.JSX.Element {
   const ws = props.watcherStatus;
   const watching = ws?.status === 'watching';
@@ -198,12 +207,27 @@ function SourceCard(props: {
             <button className="primary" disabled={props.busy} onClick={props.onStartWatch}>Start watching</button>
           )}
           {watching && (
-            <button className="ghost" disabled={props.busy} onClick={props.onStopWatch}>Pause</button>
+            <>
+              {props.onPollNow && (
+                <button className="ghost" disabled={props.busy} onClick={props.onPollNow}>Poll now</button>
+              )}
+              <button className="ghost" disabled={props.busy} onClick={props.onStopWatch}>Pause</button>
+            </>
           )}
         </div>
       </div>
       {props.extra}
       <p className="hint">{props.loginHint}</p>
+      {watching && props.log && props.log.length > 0 && (
+        <div className="poll-log">
+          {props.log.slice(0, 6).map((l, i) => (
+            <div key={i} className={`poll-row ${l.note ? 'err' : ''}`}>
+              <span className="mono">{new Date(l.at).toLocaleTimeString()}</span>
+              <span>{l.note ?? (l.ingested > 0 ? `+${l.ingested} new of ${l.total} total` : `no changes (${l.total} total)`)}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -241,6 +265,10 @@ p { margin: 4px 0 12px; }
 .ghost { padding: 6px 12px; background: transparent; border: 1px solid #2a2f3a; border-radius: 6px; color: #e6e6e6; cursor: pointer; font-size: 13px; }
 .ghost:hover { background: #14181f; }
 .card { background: #14181f; border: 1px solid #2a2f3a; border-radius: 8px; padding: 16px; margin: 14px 0; }
+.poll-log { margin-top: 10px; border-top: 1px solid #2a2f3a; padding-top: 8px; max-height: 140px; overflow-y: auto; }
+.poll-row { display: flex; gap: 10px; font-size: 12px; color: #8a93a3; padding: 2px 0; }
+.poll-row .mono { font-family: ui-monospace, monospace; min-width: 80px; }
+.poll-row.err { color: #f87171; }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .status-dot.green { background: #22c55e; }
 .status-dot.red { background: #ef4444; }
