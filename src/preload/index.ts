@@ -25,7 +25,9 @@ const api = {
   },
   watcher: {
     yelpSetBiz: (encid: string) => ipcRenderer.invoke('watcher:yelp:set-biz', encid) as Promise<void>,
-    yelpStart: () => ipcRenderer.invoke('watcher:yelp:start') as Promise<{ ok: true } | { ok: false; error: string }>,
+    yelpDetect: () => ipcRenderer.invoke('watcher:yelp:detect') as Promise<string | null>,
+    yelpGetBiz: () => ipcRenderer.invoke('watcher:yelp:get-biz') as Promise<string | null>,
+    yelpStart: () => ipcRenderer.invoke('watcher:yelp:start') as Promise<{ ok: true; bizEncid: string | null } | { ok: false; error: string }>,
     yelpStop: () => ipcRenderer.invoke('watcher:yelp:stop') as Promise<void>,
     thumbtackStart: () => ipcRenderer.invoke('watcher:thumbtack:start') as Promise<{ ok: true } | { ok: false; error: string }>,
     thumbtackStop: () => ipcRenderer.invoke('watcher:thumbtack:stop') as Promise<void>,

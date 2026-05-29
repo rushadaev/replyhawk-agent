@@ -17,7 +17,7 @@ export default function App(): React.JSX.Element {
 
   const [chromes, setChromes] = useState<Array<{ platform: Source; running: boolean }>>([]);
   const [watcher, setWatcher] = useState<{ yelp: Status; thumbtack: Status } | null>(null);
-  const [yelpBiz, setYelpBiz] = useState(() => localStorage.getItem('yelpBiz') ?? '');
+  const [yelpBiz, setYelpBiz] = useState<string | null>(null);
   const [busy, setBusy] = useState<Source | null>(null);
 
   useEffect(() => {
@@ -35,8 +35,11 @@ export default function App(): React.JSX.Element {
       const r = await window.api.cloud.heartbeat();
       const c = await window.api.chrome.list();
       const w = await window.api.watcher.status();
+      // Auto-detect Yelp biz encid from any open tab whenever Yelp Chrome is running
+      const yelpRunning = c.find((x) => x.platform === 'yelp')?.running;
+      const detected = yelpRunning ? await window.api.watcher.yelpDetect() : null;
       if (cancelled) return;
-      setHb(r); setChromes(c); setWatcher(w);
+      setHb(r); setChromes(c); setWatcher(w); setYelpBiz(detected);
     };
     tick();
     const t = setInterval(tick, 5_000);
@@ -76,11 +79,10 @@ export default function App(): React.JSX.Element {
   async function onStartWatch(source: Source): Promise<void> {
     setBusy(source);
     if (source === 'yelp') {
-      if (!yelpBiz) { alert('Open Yelp inbox once and copy the bizEncid from the URL'); setBusy(null); return; }
-      localStorage.setItem('yelpBiz', yelpBiz);
-      await window.api.watcher.yelpSetBiz(yelpBiz);
+      // The watcher itself will detect the biz encid from any open tab if not already set.
       const r = await window.api.watcher.yelpStart();
       if (!r.ok) alert('Yelp watcher failed: ' + r.error);
+      else if (r.bizEncid) setYelpBiz(r.bizEncid);
     } else {
       const r = await window.api.watcher.thumbtackStart();
       if (!r.ok) alert('Thumbtack watcher failed: ' + r.error);
@@ -125,13 +127,9 @@ export default function App(): React.JSX.Element {
         running={!!yelpChrome?.running}
         watcherStatus={watcher?.yelp}
         busy={busy === 'yelp'}
-        loginHint="Sign into biz.yelp.com once. Then paste your business encid (the long string in the URL after /leads_center/)."
-        extra={
-          yelpChrome?.running && (
-            <input className="input small" placeholder="business encid"
-                   value={yelpBiz} onChange={(e) => setYelpBiz(e.target.value)} />
-          )
-        }
+        loginHint={yelpBiz
+          ? `Detected business ${yelpBiz}. Hit "Start watching" to begin polling.`
+          : 'Sign into biz.yelp.com in the opened Chrome window. We\'ll auto-detect your business ID from the URL.'}
         onConnect={() => onConnect('yelp')}
         onDisconnect={() => onDisconnect('yelp')}
         onStartWatch={() => onStartWatch('yelp')}

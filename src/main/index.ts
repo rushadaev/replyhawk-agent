@@ -69,7 +69,9 @@ app.whenReady().then(() => {
 
   // Watcher controls
   ipcMain.handle('watcher:yelp:set-biz', async (_e, encid: string) => yelp.setBiz(encid));
-  ipcMain.handle('watcher:yelp:start', async () => yelp.start(30).then(() => ({ ok: true })).catch((e: Error) => ({ ok: false, error: e.message })));
+  ipcMain.handle('watcher:yelp:detect', async () => yelp.detectBizEncid());
+  ipcMain.handle('watcher:yelp:get-biz', async () => yelp.getBiz());
+  ipcMain.handle('watcher:yelp:start', async () => yelp.start(30).then(() => ({ ok: true, bizEncid: yelp.getBiz() })).catch((e: Error) => ({ ok: false, error: e.message })));
   ipcMain.handle('watcher:yelp:stop', async () => yelp.stop());
   ipcMain.handle('watcher:thumbtack:start', async () => thumbtack.start(30).then(() => ({ ok: true })).catch((e: Error) => ({ ok: false, error: e.message })));
   ipcMain.handle('watcher:thumbtack:stop', async () => thumbtack.stop());

@@ -22,10 +22,32 @@ export class YelpWatcher {
   constructor(cdpPort: number) { this.cdpPort = cdpPort; }
 
   setBiz(encid: string): void { this.bizEncid = encid; }
+  getBiz(): string | null { return this.bizEncid; }
+
+  // Inspect every tab in the attached Chrome and pull the encid out of any
+  // biz.yelp.com URL — works whether the operator is on /home/<id>/, /leads_center/<id>/, etc.
+  async detectBizEncid(): Promise<string | null> {
+    try {
+      return await this.withContext(async (ctx) => {
+        for (const p of ctx.pages()) {
+          const u = p.url();
+          const m = u.match(/biz\.yelp\.com\/(?:home|leads_center|reviews|inbox)\/([A-Za-z0-9_-]{20,})/);
+          if (m) return m[1];
+        }
+        return null;
+      });
+    } catch {
+      return null;
+    }
+  }
 
   async start(intervalSec = 30): Promise<void> {
     if (this.timer) return;
-    if (!this.bizEncid) throw new Error('Biz encid not set — open Yelp inbox once first');
+    if (!this.bizEncid) {
+      const detected = await this.detectBizEncid();
+      if (!detected) throw new Error('Could not find a logged-in Yelp Biz tab. Sign in once in the opened Chrome window.');
+      this.bizEncid = detected;
+    }
     this.status = 'connecting';
     const ms = Math.max(15, intervalSec) * 1000;
     const tick = async (): Promise<void> => {
