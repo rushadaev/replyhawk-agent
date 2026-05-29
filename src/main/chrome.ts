@@ -92,10 +92,12 @@ export function startChromeFor(
     '--no-default-browser-check',
   ];
   if (hidden) {
-    // Off-screen + minimum visible window so the user never sees polling.
-    args.push('--window-position=-32000,-32000', '--window-size=1280,800');
+    // True headless mode (Chrome 109+). Same renderer as visible Chrome, no window,
+    // no dock icon, no focus stealing. Stealth flag masks navigator.webdriver.
+    args.push('--headless=new', '--disable-blink-features=AutomationControlled');
+  } else {
+    args.push(startUrl);
   }
-  args.push(startUrl);
 
   const proc = spawn(chrome, args, { detached: false, stdio: 'ignore' });
 
