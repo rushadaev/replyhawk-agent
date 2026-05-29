@@ -147,6 +147,7 @@ export default function App(): React.JSX.Element {
         onStartWatch={() => onStartWatch('yelp')}
         onStopWatch={() => window.api.watcher.yelpStop()}
         onShowWindow={() => window.api.chrome.show('yelp')}
+        onHide={() => window.api.chrome.hide('yelp')}
         onPollNow={async () => {
           const r = await window.api.watcher.yelpPollNow();
           if (r.ok) alert(`Polled: ${r.ingested} new lead(s) ingested of ${r.total} total in inbox.`);
@@ -170,6 +171,7 @@ export default function App(): React.JSX.Element {
         onStartWatch={() => onStartWatch('thumbtack')}
         onStopWatch={() => window.api.watcher.thumbtackStop()}
         onShowWindow={() => window.api.chrome.show('thumbtack')}
+        onHide={() => window.api.chrome.hide('thumbtack')}
         onPollNow={async () => {
           const r = await window.api.watcher.thumbtackPollNow();
           if (r.ok) alert(`Polled: ${r.ingested} new thread(s) ingested of ${r.total} total in inbox.`);
@@ -199,6 +201,7 @@ function SourceCard(props: {
   onStartWatch: () => void;
   onStopWatch: () => void;
   onShowWindow: () => void;
+  onHide: () => void;
   onPollNow?: () => void;
   log?: Array<{ at: number; ingested: number; total: number; note?: string }>;
   showPreview?: boolean;
@@ -225,6 +228,8 @@ function SourceCard(props: {
             <button className="primary" disabled={props.busy} onClick={props.onConnect}>Open Chrome</button>
           ) : props.hidden ? (
             <button className="ghost" disabled={props.busy} onClick={props.onShowWindow}>Show window</button>
+          ) : watching ? (
+            <button className="ghost" disabled={props.busy} onClick={props.onHide}>Hide</button>
           ) : (
             <button className="ghost" disabled={props.busy} onClick={props.onDisconnect}>Close Chrome</button>
           )}
