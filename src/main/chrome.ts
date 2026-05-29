@@ -5,7 +5,7 @@
 import { app, shell } from 'electron';
 import { spawn, ChildProcess } from 'node:child_process';
 import { join } from 'node:path';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, unlinkSync } from 'node:fs';
 import { platform } from 'node:os';
 
 const CHROME_PATHS: Record<string, string[]> = {
@@ -69,6 +69,16 @@ function profileDirFor(p: PlatformId['id']): string {
   return dir;
 }
 
+// Chrome leaves a SingletonLock file in user-data-dir while running. If a previous
+// process died ungracefully (crash, force-kill), the lock survives and the next
+// launch silently fails. Clean stale locks before spawning.
+function cleanProfileLocks(profile: string): void {
+  for (const f of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
+    const p = join(profile, f);
+    try { if (existsSync(p)) unlinkSync(p); } catch { /* noop */ }
+  }
+}
+
 export function startChromeFor(
   platform: PlatformId['id'],
   startUrl: string,
@@ -83,6 +93,7 @@ export function startChromeFor(
   }
   const port = portFor(platform);
   const profile = profileDirFor(platform);
+  cleanProfileLocks(profile);
   const hidden = !!opts.hidden;
 
   const args = [

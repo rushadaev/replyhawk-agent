@@ -5,6 +5,8 @@ import { chromium, BrowserContext, Page } from 'playwright-core';
 import { extractThumbtackLead, ThumbtackLead } from '../extractors/thumbtack';
 import { postLead, postEvent } from '../cloudClient';
 
+export interface ThumbtackLog { at: number; ingested: number; total: number; note?: string }
+
 export class ThumbtackWatcher {
   private timer: NodeJS.Timeout | null = null;
   private seen = new Set<string>();
@@ -12,6 +14,9 @@ export class ThumbtackWatcher {
   status: 'idle' | 'connecting' | 'watching' | 'error' = 'idle';
   lastError?: string;
   lastTick?: number;
+  log: ThumbtackLog[] = [];
+
+  recent(n = 10): ThumbtackLog[] { return this.log.slice(0, n); }
 
   constructor(cdpPort: number) { this.cdpPort = cdpPort; }
 
@@ -20,8 +25,18 @@ export class ThumbtackWatcher {
     this.status = 'connecting';
     const ms = Math.max(15, intervalSec) * 1000;
     const tick = async (): Promise<void> => {
-      try { await this.pollOnce(); this.status = 'watching'; this.lastTick = Date.now(); }
-      catch (e) { this.status = 'error'; this.lastError = (e as Error).message; }
+      try {
+        const r = await this.pollOnceWithResult();
+        this.status = 'watching';
+        this.lastTick = Date.now();
+        this.lastError = undefined;
+        this.log.unshift({ at: this.lastTick, ingested: r.ingested, total: r.total });
+        if (this.log.length > 50) this.log.length = 50;
+      } catch (e) {
+        this.status = 'error';
+        this.lastError = (e as Error).message;
+        this.log.unshift({ at: Date.now(), ingested: 0, total: 0, note: `ERROR: ${this.lastError}` });
+      }
     };
     await tick();
     this.timer = setInterval(tick, ms);
@@ -43,34 +58,46 @@ export class ThumbtackWatcher {
     }
   }
 
-  private async pollOnce(): Promise<void> {
+  private async pollOnceWithResult(): Promise<{ ingested: number; total: number }> {
+    let ingested = 0; let total = 0;
     await this.withContext(async (ctx) => {
       const page = await ctx.newPage();
-      await page.goto('https://www.thumbtack.com/pro-inbox/', { waitUntil: 'domcontentloaded' });
-      await page.waitForTimeout(3000);
-      const ids: string[] = await page.evaluate(() => {
-        const out = new Set<string>();
-        for (const a of Array.from(document.querySelectorAll('a[href]'))) {
-          const h = a.getAttribute('href') ?? '';
-          const m = h.match(/\/pro-inbox\/messages\/(\d+)/);
-          if (m) out.add(m[1]);
+      try {
+        await page.goto('https://www.thumbtack.com/pro-inbox/', { waitUntil: 'domcontentloaded' });
+        await page.waitForTimeout(3000);
+        const ids: string[] = await page.evaluate(() => {
+          const out = new Set<string>();
+          for (const a of Array.from(document.querySelectorAll('a[href]'))) {
+            const h = a.getAttribute('href') ?? '';
+            const m = h.match(/\/pro-inbox\/messages\/(\d+)/);
+            if (m) out.add(m[1]);
+          }
+          return Array.from(out);
+        });
+        total = ids.length;
+        const isFirstRun = this.seen.size === 0;
+        const newOnes = ids.filter((id) => !this.seen.has(id));
+        // On first run after startup, just record what's already in the inbox — don't
+        // re-ingest threads. The cloud dedups anyway but this avoids wasting time
+        // re-scraping every existing thread.
+        for (const id of ids) this.seen.add(id);
+        if (isFirstRun) return;
+        for (const id of newOnes) {
+          try { await this.ingestOne(page, id); ingested++; }
+          catch (e) { console.error('thumbtack ingest failed', id, (e as Error).message); }
         }
-        return Array.from(out);
-      });
-      await page.close();
-      const newOnes = ids.filter((id) => !this.seen.has(id));
-      for (const id of newOnes) {
-        try { await this.ingestOne(ctx, id); this.seen.add(id); }
-        catch (e) { console.error('thumbtack ingest failed', id, (e as Error).message); }
+      } finally {
+        await page.close().catch(() => undefined);
       }
     });
+    return { ingested, total };
   }
 
-  private async ingestOne(ctx: BrowserContext, bidPk: string): Promise<void> {
+  private async ingestOne(page: Page, bidPk: string): Promise<void> {
     const url = `https://www.thumbtack.com/pro-inbox/messages/${bidPk}`;
-    const page: Page = await ctx.newPage();
     const captured: { stream: { messages?: unknown[] } | null } = { stream: null };
     const listener = async (resp: import('playwright-core').Response): Promise<void> => {
+      if (resp.url().includes('about:blank')) return;
       if (!/app\.thumbtack\.com\/graphql/.test(resp.url())) return;
       try {
         const req = JSON.parse(resp.request().postData() || '{}') as { operationName?: string };
@@ -100,7 +127,6 @@ export class ThumbtackWatcher {
       return node.innerText ?? null;
     });
     page.off('response', listener);
-    await page.close();
     if (!captured.stream) return;
     const lead: ThumbtackLead = extractThumbtackLead({ stream: captured.stream as Parameters<typeof extractThumbtackLead>[0]['stream'], panel, bidPk, url });
 
