@@ -1,7 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { electronAPI } from '@electron-toolkit/preload';
 
-// Safe bridge exposing only the IPC methods we want the renderer to call.
+type Source = 'yelp' | 'thumbtack';
+
 const api = {
   auth: {
     getToken: () => ipcRenderer.invoke('auth:get-token') as Promise<{ hasToken: boolean; preview?: string }>,
@@ -16,6 +17,22 @@ const api = {
       | { ok: true; ts: number }
       | { ok: false; reason: 'no_token' | 'unauthorized' | 'unreachable'; detail?: string }
     >,
+  },
+  chrome: {
+    start: (source: Source) => ipcRenderer.invoke('chrome:start', source) as Promise<{ ok: true; port: number } | { ok: false; error: string }>,
+    stop: (source: Source) => ipcRenderer.invoke('chrome:stop', source) as Promise<void>,
+    list: () => ipcRenderer.invoke('chrome:list') as Promise<Array<{ platform: Source; port: number; running: boolean }>>,
+  },
+  watcher: {
+    yelpSetBiz: (encid: string) => ipcRenderer.invoke('watcher:yelp:set-biz', encid) as Promise<void>,
+    yelpStart: () => ipcRenderer.invoke('watcher:yelp:start') as Promise<{ ok: true } | { ok: false; error: string }>,
+    yelpStop: () => ipcRenderer.invoke('watcher:yelp:stop') as Promise<void>,
+    thumbtackStart: () => ipcRenderer.invoke('watcher:thumbtack:start') as Promise<{ ok: true } | { ok: false; error: string }>,
+    thumbtackStop: () => ipcRenderer.invoke('watcher:thumbtack:stop') as Promise<void>,
+    status: () => ipcRenderer.invoke('watcher:status') as Promise<{
+      yelp: { status: string; lastTick?: number; lastError?: string };
+      thumbtack: { status: string; lastTick?: number; lastError?: string };
+    }>,
   },
 };
 
