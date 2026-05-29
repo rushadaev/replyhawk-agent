@@ -1,0 +1,38 @@
+appId: com.replyhawk.agent
+productName: ReplyHawk Agent
+directories:
+  buildResources: build
+files:
+  - '!**/.vscode/*'
+  - '!src/*'
+  - '!electron.vite.config.{js,ts,mjs,cjs}'
+  - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
+  - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
+  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+asarUnpack:
+  - 'resources/**'
+mac:
+  category: public.app-category.business
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  notarize: false  # set true once APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID are in env
+  entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    LSUIElement: 0
+    NSCameraUsageDescription: ReplyHawk Agent does not use the camera.
+    NSMicrophoneUsageDescription: ReplyHawk Agent does not use the microphone.
+dmg:
+  artifactName: ReplyHawk-Agent-${version}.${ext}
+  iconSize: 100
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+npmRebuild: false
+publish:
+  provider: github
+  owner: rushadaev
+  repo: replyhawk-agent
