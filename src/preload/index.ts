@@ -33,6 +33,7 @@ const api = {
     yelpStop: () => ipcRenderer.invoke('watcher:yelp:stop') as Promise<void>,
     yelpPollNow: () => ipcRenderer.invoke('watcher:yelp:poll-now') as Promise<{ ok: true; ingested: number; total: number } | { ok: false; error: string }>,
     yelpLog: () => ipcRenderer.invoke('watcher:yelp:log') as Promise<Array<{ at: number; ingested: number; total: number; note?: string }>>,
+    yelpScreenshot: () => ipcRenderer.invoke('watcher:yelp:screenshot') as Promise<{ at: number; b64: string } | null>,
     thumbtackStart: () => ipcRenderer.invoke('watcher:thumbtack:start') as Promise<{ ok: true } | { ok: false; error: string }>,
     thumbtackStop: () => ipcRenderer.invoke('watcher:thumbtack:stop') as Promise<void>,
     status: () => ipcRenderer.invoke('watcher:status') as Promise<{

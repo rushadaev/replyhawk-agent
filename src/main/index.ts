@@ -84,6 +84,7 @@ app.whenReady().then(() => {
   ipcMain.handle('watcher:yelp:stop', async () => yelp.stop());
   ipcMain.handle('watcher:yelp:poll-now', async () => yelp.pollNow());
   ipcMain.handle('watcher:yelp:log', async () => yelp.recent(10));
+  ipcMain.handle('watcher:yelp:screenshot', async () => yelp.lastScreenshot ?? null);
   ipcMain.handle('watcher:thumbtack:start', async () => {
     try {
       await thumbtack.start(30);

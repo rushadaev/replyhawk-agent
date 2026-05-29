@@ -21,6 +21,8 @@ export class YelpWatcher {
   lastError?: string;
   lastTick?: number;
   log: PollLog[] = [];
+  // Latest screenshot of the inbox page (base64 jpeg). Updated on every successful poll.
+  lastScreenshot?: { at: number; b64: string };
 
   constructor(cdpPort: number) { this.cdpPort = cdpPort; }
 
@@ -130,6 +132,12 @@ export class YelpWatcher {
           else if (prev.lastEventTime !== it.lastEventTime && it.latestIsCustomer) changed.push(it);
           this.snapshot.set(it.leadEncid, { encid: it.leadEncid, lastEventTime: it.lastEventTime });
         }
+        // Capture a screenshot for the UI so the operator can see what we see.
+        try {
+          const buf = await page.screenshot({ type: 'jpeg', quality: 40, fullPage: false });
+          this.lastScreenshot = { at: Date.now(), b64: buf.toString('base64') };
+        } catch { /* screenshot failure is non-fatal */ }
+
         report(isFirstRun ? 0 : changed.length, items.length);
         if (isFirstRun) return;
         for (const it of changed) {

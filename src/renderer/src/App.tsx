@@ -18,6 +18,8 @@ export default function App(): React.JSX.Element {
   const [chromes, setChromes] = useState<Array<{ platform: Source; running: boolean; hidden: boolean }>>([]);
   const [watcher, setWatcher] = useState<{ yelp: Status; thumbtack: Status } | null>(null);
   const [yelpLog, setYelpLog] = useState<Array<{ at: number; ingested: number; total: number; note?: string }>>([]);
+  const [yelpShot, setYelpShot] = useState<{ at: number; b64: string } | null>(null);
+  const [showShot, setShowShot] = useState(false);
   const [yelpBiz, setYelpBiz] = useState<string | null>(null);
   const [busy, setBusy] = useState<Source | null>(null);
 
@@ -29,6 +31,9 @@ export default function App(): React.JSX.Element {
     })();
   }, []);
 
+  // Re-tick when the screenshot pane toggles so the screenshot loads immediately
+  useEffect(() => { /* triggers re-render when showShot changes */ }, [showShot]);
+
   useEffect(() => {
     if (!hasToken) return;
     let cancelled = false;
@@ -39,8 +44,10 @@ export default function App(): React.JSX.Element {
       const yelpRunning = c.find((x) => x.platform === 'yelp')?.running;
       const detected = yelpRunning ? await window.api.watcher.yelpDetect() : null;
       const log = w.yelp.status !== 'idle' ? await window.api.watcher.yelpLog() : [];
+      // Only fetch screenshot when the preview pane is open, to avoid shuffling ~80KB through IPC every 5s.
+      const shot = (showShot && w.yelp.status !== 'idle') ? await window.api.watcher.yelpScreenshot() : null;
       if (cancelled) return;
-      setHb(r); setChromes(c); setWatcher(w); setYelpBiz(detected); setYelpLog(log);
+      setHb(r); setChromes(c); setWatcher(w); setYelpBiz(detected); setYelpLog(log); setYelpShot(shot);
     };
     tick();
     const t = setInterval(tick, 5_000);
@@ -143,6 +150,9 @@ export default function App(): React.JSX.Element {
           else alert(`Poll failed: ${r.error}`);
         }}
         log={yelpLog}
+        showPreview={showShot}
+        onTogglePreview={() => setShowShot((v) => !v)}
+        screenshot={yelpShot}
       />
 
       <SourceCard
@@ -179,6 +189,9 @@ function SourceCard(props: {
   onShowWindow: () => void;
   onPollNow?: () => void;
   log?: Array<{ at: number; ingested: number; total: number; note?: string }>;
+  showPreview?: boolean;
+  onTogglePreview?: () => void;
+  screenshot?: { at: number; b64: string } | null;
 }): React.JSX.Element {
   const ws = props.watcherStatus;
   const watching = ws?.status === 'watching';
@@ -208,6 +221,11 @@ function SourceCard(props: {
           )}
           {watching && (
             <>
+              {props.onTogglePreview && (
+                <button className="ghost" disabled={props.busy} onClick={props.onTogglePreview}>
+                  {props.showPreview ? 'Hide preview' : 'Live view'}
+                </button>
+              )}
               {props.onPollNow && (
                 <button className="ghost" disabled={props.busy} onClick={props.onPollNow}>Poll now</button>
               )}
@@ -218,6 +236,18 @@ function SourceCard(props: {
       </div>
       {props.extra}
       <p className="hint">{props.loginHint}</p>
+      {watching && props.showPreview && (
+        <div className="preview">
+          {props.screenshot ? (
+            <>
+              <div className="muted small">Live view · captured {new Date(props.screenshot.at).toLocaleTimeString()}</div>
+              <img className="shot" alt="Inbox preview" src={`data:image/jpeg;base64,${props.screenshot.b64}`} />
+            </>
+          ) : (
+            <div className="muted small">Capturing… (refreshes on the next poll cycle)</div>
+          )}
+        </div>
+      )}
       {watching && props.log && props.log.length > 0 && (
         <div className="poll-log">
           {props.log.slice(0, 6).map((l, i) => (
@@ -265,6 +295,8 @@ p { margin: 4px 0 12px; }
 .ghost { padding: 6px 12px; background: transparent; border: 1px solid #2a2f3a; border-radius: 6px; color: #e6e6e6; cursor: pointer; font-size: 13px; }
 .ghost:hover { background: #14181f; }
 .card { background: #14181f; border: 1px solid #2a2f3a; border-radius: 8px; padding: 16px; margin: 14px 0; }
+.preview { margin-top: 10px; border-top: 1px solid #2a2f3a; padding-top: 8px; }
+.preview .shot { width: 100%; border: 1px solid #2a2f3a; border-radius: 6px; margin-top: 6px; display: block; }
 .poll-log { margin-top: 10px; border-top: 1px solid #2a2f3a; padding-top: 8px; max-height: 140px; overflow-y: auto; }
 .poll-row { display: flex; gap: 10px; font-size: 12px; color: #8a93a3; padding: 2px 0; }
 .poll-row .mono { font-family: ui-monospace, monospace; min-width: 80px; }
