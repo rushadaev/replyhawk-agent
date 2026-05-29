@@ -198,7 +198,7 @@ function SourceCard(props: {
   return (
     <div className="card">
       <div className="row between">
-        <div>
+        <div style={{ minWidth: 0, flex: 1 }}>
           <h3>{props.name}</h3>
           <div className="muted small">
             {!props.running && 'Not connected'}
@@ -208,7 +208,7 @@ function SourceCard(props: {
             {ws?.lastError && <span className="error"> · {ws.lastError}</span>}
           </div>
         </div>
-        <div className="row">
+        <div className="actions">
           {!props.running ? (
             <button className="primary" disabled={props.busy} onClick={props.onConnect}>Open Chrome</button>
           ) : props.hidden ? (
@@ -275,7 +275,7 @@ const css = `
 :root { color-scheme: dark; }
 * { box-sizing: border-box; }
 body, html, #root { margin:0; padding:0; height:100%; background:#0b0d10; color:#e6e6e6; font:14px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif; }
-.container { max-width: 620px; margin: 0 auto; padding: 36px 24px; }
+.container { max-width: 820px; margin: 0 auto; padding: 36px 24px; }
 h1 { font-size: 22px; margin: 0 0 8px; }
 h3 { font-size: 14px; margin: 0 0 4px; font-weight: 600; }
 p { margin: 4px 0 12px; }
@@ -290,10 +290,11 @@ p { margin: 4px 0 12px; }
 .input.small { padding: 6px 8px; font-size: 12px; }
 .input:focus { outline: 1px solid #3b82f6; }
 .error { color: #f87171; font-size: 12px; }
-.primary { padding: 8px 14px; background: #3b82f6; border: 0; border-radius: 6px; color: #fff; font-weight: 600; cursor: pointer; }
+.primary { padding: 8px 14px; background: #3b82f6; border: 0; border-radius: 6px; color: #fff; font-weight: 600; cursor: pointer; white-space: nowrap; }
 .primary:disabled { opacity: .5; cursor: not-allowed; }
-.ghost { padding: 6px 12px; background: transparent; border: 1px solid #2a2f3a; border-radius: 6px; color: #e6e6e6; cursor: pointer; font-size: 13px; }
+.ghost { padding: 6px 12px; background: transparent; border: 1px solid #2a2f3a; border-radius: 6px; color: #e6e6e6; cursor: pointer; font-size: 13px; white-space: nowrap; }
 .ghost:hover { background: #14181f; }
+.actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; max-width: 60%; }
 .card { background: #14181f; border: 1px solid #2a2f3a; border-radius: 8px; padding: 16px; margin: 14px 0; }
 .preview { margin-top: 10px; border-top: 1px solid #2a2f3a; padding-top: 8px; }
 .preview .shot { width: 100%; border: 1px solid #2a2f3a; border-radius: 6px; margin-top: 6px; display: block; }
