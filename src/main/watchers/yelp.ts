@@ -134,9 +134,12 @@ export class YelpWatcher {
         }
         // Capture a screenshot for the UI so the operator can see what we see.
         try {
+          await page.setViewportSize({ width: 1280, height: 800 }).catch(() => undefined);
           const buf = await page.screenshot({ type: 'jpeg', quality: 40, fullPage: false });
           this.lastScreenshot = { at: Date.now(), b64: buf.toString('base64') };
-        } catch { /* screenshot failure is non-fatal */ }
+        } catch (e) {
+          console.warn('[yelp] screenshot failed:', (e as Error).message);
+        }
 
         report(isFirstRun ? 0 : changed.length, items.length);
         if (isFirstRun) return;

@@ -19,7 +19,10 @@ export default function App(): React.JSX.Element {
   const [watcher, setWatcher] = useState<{ yelp: Status; thumbtack: Status } | null>(null);
   const [yelpLog, setYelpLog] = useState<Array<{ at: number; ingested: number; total: number; note?: string }>>([]);
   const [yelpShot, setYelpShot] = useState<{ at: number; b64: string } | null>(null);
-  const [showShot, setShowShot] = useState(false);
+  const [showYelpShot, setShowYelpShot] = useState(false);
+  const [ttLog, setTtLog] = useState<Array<{ at: number; ingested: number; total: number; note?: string }>>([]);
+  const [ttShot, setTtShot] = useState<{ at: number; b64: string } | null>(null);
+  const [showTtShot, setShowTtShot] = useState(false);
   const [yelpBiz, setYelpBiz] = useState<string | null>(null);
   const [busy, setBusy] = useState<Source | null>(null);
 
@@ -31,9 +34,6 @@ export default function App(): React.JSX.Element {
     })();
   }, []);
 
-  // Re-tick when the screenshot pane toggles so the screenshot loads immediately
-  useEffect(() => { /* triggers re-render when showShot changes */ }, [showShot]);
-
   useEffect(() => {
     if (!hasToken) return;
     let cancelled = false;
@@ -43,16 +43,19 @@ export default function App(): React.JSX.Element {
       const w = await window.api.watcher.status();
       const yelpRunning = c.find((x) => x.platform === 'yelp')?.running;
       const detected = yelpRunning ? await window.api.watcher.yelpDetect() : null;
-      const log = w.yelp.status !== 'idle' ? await window.api.watcher.yelpLog() : [];
-      // Only fetch screenshot when the preview pane is open, to avoid shuffling ~80KB through IPC every 5s.
-      const shot = (showShot && w.yelp.status !== 'idle') ? await window.api.watcher.yelpScreenshot() : null;
+      const yLog = w.yelp.status !== 'idle' ? await window.api.watcher.yelpLog() : [];
+      const yShot = (showYelpShot && w.yelp.status !== 'idle') ? await window.api.watcher.yelpScreenshot() : null;
+      const tLog = w.thumbtack.status !== 'idle' ? await window.api.watcher.thumbtackLog() : [];
+      const tShot = (showTtShot && w.thumbtack.status !== 'idle') ? await window.api.watcher.thumbtackScreenshot() : null;
       if (cancelled) return;
-      setHb(r); setChromes(c); setWatcher(w); setYelpBiz(detected); setYelpLog(log); setYelpShot(shot);
+      setHb(r); setChromes(c); setWatcher(w); setYelpBiz(detected);
+      setYelpLog(yLog); setYelpShot(yShot);
+      setTtLog(tLog); setTtShot(tShot);
     };
     tick();
     const t = setInterval(tick, 5_000);
     return () => { cancelled = true; clearInterval(t); };
-  }, [hasToken]);
+  }, [hasToken, showYelpShot, showTtShot]);
 
   async function onSave(): Promise<void> {
     const token = tokenInput.trim();
@@ -150,8 +153,8 @@ export default function App(): React.JSX.Element {
           else alert(`Poll failed: ${r.error}`);
         }}
         log={yelpLog}
-        showPreview={showShot}
-        onTogglePreview={() => setShowShot((v) => !v)}
+        showPreview={showYelpShot}
+        onTogglePreview={() => setShowYelpShot((v) => !v)}
         screenshot={yelpShot}
       />
 
@@ -167,6 +170,15 @@ export default function App(): React.JSX.Element {
         onStartWatch={() => onStartWatch('thumbtack')}
         onStopWatch={() => window.api.watcher.thumbtackStop()}
         onShowWindow={() => window.api.chrome.show('thumbtack')}
+        onPollNow={async () => {
+          const r = await window.api.watcher.thumbtackPollNow();
+          if (r.ok) alert(`Polled: ${r.ingested} new thread(s) ingested of ${r.total} total in inbox.`);
+          else alert(`Poll failed: ${r.error}`);
+        }}
+        log={ttLog}
+        showPreview={showTtShot}
+        onTogglePreview={() => setShowTtShot((v) => !v)}
+        screenshot={ttShot}
       />
 
       <div className="muted small mono">paired as {tokenPreview}</div>

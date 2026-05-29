@@ -94,6 +94,9 @@ app.whenReady().then(() => {
     } catch (e) { return { ok: false, error: (e as Error).message }; }
   });
   ipcMain.handle('watcher:thumbtack:stop', async () => thumbtack.stop());
+  ipcMain.handle('watcher:thumbtack:poll-now', async () => thumbtack.pollNow());
+  ipcMain.handle('watcher:thumbtack:log', async () => thumbtack.recent(10));
+  ipcMain.handle('watcher:thumbtack:screenshot', async () => thumbtack.lastScreenshot ?? null);
   ipcMain.handle('watcher:status', async () => ({
     yelp: { status: yelp.status, lastTick: yelp.lastTick, lastError: yelp.lastError },
     thumbtack: { status: thumbtack.status, lastTick: thumbtack.lastTick, lastError: thumbtack.lastError },

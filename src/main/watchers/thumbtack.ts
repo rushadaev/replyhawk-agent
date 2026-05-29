@@ -16,7 +16,18 @@ export class ThumbtackWatcher {
   lastTick?: number;
   log: ThumbtackLog[] = [];
 
+  lastScreenshot?: { at: number; b64: string };
+
   recent(n = 10): ThumbtackLog[] { return this.log.slice(0, n); }
+
+  async pollNow(): Promise<{ ok: true; ingested: number; total: number } | { ok: false; error: string }> {
+    try {
+      const r = await this.pollOnceWithResult();
+      return { ok: true, ...r };
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
+  }
 
   constructor(cdpPort: number) { this.cdpPort = cdpPort; }
 
@@ -77,10 +88,18 @@ export class ThumbtackWatcher {
         total = ids.length;
         const isFirstRun = this.seen.size === 0;
         const newOnes = ids.filter((id) => !this.seen.has(id));
-        // On first run after startup, just record what's already in the inbox — don't
-        // re-ingest threads. The cloud dedups anyway but this avoids wasting time
-        // re-scraping every existing thread.
         for (const id of ids) this.seen.add(id);
+
+        // Capture a screenshot of the inbox for the UI.
+        try {
+          await page.setViewportSize({ width: 1280, height: 800 }).catch(() => undefined);
+          const buf = await page.screenshot({ type: 'jpeg', quality: 40, fullPage: false });
+          this.lastScreenshot = { at: Date.now(), b64: buf.toString('base64') };
+        } catch (e) {
+          console.warn('[thumbtack] screenshot failed:', (e as Error).message);
+        }
+
+        // On first run after startup, just record what's already in the inbox.
         if (isFirstRun) return;
         for (const id of newOnes) {
           try { await this.ingestOne(page, id); ingested++; }
