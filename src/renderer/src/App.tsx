@@ -15,7 +15,7 @@ export default function App(): React.JSX.Element {
   const [verifying, setVerifying] = useState(false);
   const [verifyError, setVerifyError] = useState<string | null>(null);
 
-  const [chromes, setChromes] = useState<Array<{ platform: Source; running: boolean }>>([]);
+  const [chromes, setChromes] = useState<Array<{ platform: Source; running: boolean; hidden: boolean }>>([]);
   const [watcher, setWatcher] = useState<{ yelp: Status; thumbtack: Status } | null>(null);
   const [yelpBiz, setYelpBiz] = useState<string | null>(null);
   const [busy, setBusy] = useState<Source | null>(null);
@@ -125,6 +125,7 @@ export default function App(): React.JSX.Element {
       <SourceCard
         name="Yelp Biz"
         running={!!yelpChrome?.running}
+        hidden={!!yelpChrome?.hidden}
         watcherStatus={watcher?.yelp}
         busy={busy === 'yelp'}
         loginHint={yelpBiz
@@ -134,11 +135,13 @@ export default function App(): React.JSX.Element {
         onDisconnect={() => onDisconnect('yelp')}
         onStartWatch={() => onStartWatch('yelp')}
         onStopWatch={() => window.api.watcher.yelpStop()}
+        onShowWindow={() => window.api.chrome.show('yelp')}
       />
 
       <SourceCard
         name="Thumbtack Pro"
         running={!!ttChrome?.running}
+        hidden={!!ttChrome?.hidden}
         watcherStatus={watcher?.thumbtack}
         busy={busy === 'thumbtack'}
         loginHint="Sign into thumbtack.com once. We'll poll /pro-inbox/ for new threads."
@@ -146,6 +149,7 @@ export default function App(): React.JSX.Element {
         onDisconnect={() => onDisconnect('thumbtack')}
         onStartWatch={() => onStartWatch('thumbtack')}
         onStopWatch={() => window.api.watcher.thumbtackStop()}
+        onShowWindow={() => window.api.chrome.show('thumbtack')}
       />
 
       <div className="muted small mono">paired as {tokenPreview}</div>
@@ -156,6 +160,7 @@ export default function App(): React.JSX.Element {
 function SourceCard(props: {
   name: string;
   running: boolean;
+  hidden: boolean;
   watcherStatus?: Status;
   busy: boolean;
   loginHint: string;
@@ -164,6 +169,7 @@ function SourceCard(props: {
   onDisconnect: () => void;
   onStartWatch: () => void;
   onStopWatch: () => void;
+  onShowWindow: () => void;
 }): React.JSX.Element {
   const ws = props.watcherStatus;
   const watching = ws?.status === 'watching';
@@ -174,14 +180,17 @@ function SourceCard(props: {
           <h3>{props.name}</h3>
           <div className="muted small">
             {!props.running && 'Not connected'}
-            {props.running && !watching && 'Chrome open — log in then start watcher'}
-            {watching && `Watching · last tick ${ws?.lastTick ? new Date(ws.lastTick).toLocaleTimeString() : '—'}`}
+            {props.running && !watching && !props.hidden && 'Chrome open — log in then start watcher'}
+            {watching && props.hidden && `Watching in background · last tick ${ws?.lastTick ? new Date(ws.lastTick).toLocaleTimeString() : '—'}`}
+            {watching && !props.hidden && `Watching · last tick ${ws?.lastTick ? new Date(ws.lastTick).toLocaleTimeString() : '—'}`}
             {ws?.lastError && <span className="error"> · {ws.lastError}</span>}
           </div>
         </div>
         <div className="row">
           {!props.running ? (
             <button className="primary" disabled={props.busy} onClick={props.onConnect}>Open Chrome</button>
+          ) : props.hidden ? (
+            <button className="ghost" disabled={props.busy} onClick={props.onShowWindow}>Show window</button>
           ) : (
             <button className="ghost" disabled={props.busy} onClick={props.onDisconnect}>Close Chrome</button>
           )}

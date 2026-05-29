@@ -4,7 +4,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils';
 import icon from '../../resources/icon.png?asset';
 import { getToken, setToken, clearToken, verifyToken } from './auth';
 import { heartbeat } from './heartbeat';
-import { startChromeFor, stopChromeFor, listChromes, type PlatformId } from './chrome';
+import { startChromeFor, stopChromeFor, listChromes, makeHidden, showWindow, startUrlFor, type PlatformId } from './chrome';
 import { YelpWatcher } from './watchers/yelp';
 import { ThumbtackWatcher } from './watchers/thumbtack';
 
@@ -66,14 +66,29 @@ app.whenReady().then(() => {
   });
   ipcMain.handle('chrome:stop', async (_e, p: PlatformId['id']) => stopChromeFor(p));
   ipcMain.handle('chrome:list', async () => listChromes());
+  ipcMain.handle('chrome:hide', async (_e, p: PlatformId['id']) => makeHidden(p, startUrlFor(p)));
+  ipcMain.handle('chrome:show', async (_e, p: PlatformId['id']) => showWindow(p, startUrlFor(p)));
 
   // Watcher controls
   ipcMain.handle('watcher:yelp:set-biz', async (_e, encid: string) => yelp.setBiz(encid));
   ipcMain.handle('watcher:yelp:detect', async () => yelp.detectBizEncid());
   ipcMain.handle('watcher:yelp:get-biz', async () => yelp.getBiz());
-  ipcMain.handle('watcher:yelp:start', async () => yelp.start(30).then(() => ({ ok: true, bizEncid: yelp.getBiz() })).catch((e: Error) => ({ ok: false, error: e.message })));
+  ipcMain.handle('watcher:yelp:start', async () => {
+    try {
+      await yelp.start(30);
+      // Once polling is up, swap the visible login window for an off-screen one.
+      await makeHidden('yelp', startUrlFor('yelp'));
+      return { ok: true, bizEncid: yelp.getBiz() };
+    } catch (e) { return { ok: false, error: (e as Error).message }; }
+  });
   ipcMain.handle('watcher:yelp:stop', async () => yelp.stop());
-  ipcMain.handle('watcher:thumbtack:start', async () => thumbtack.start(30).then(() => ({ ok: true })).catch((e: Error) => ({ ok: false, error: e.message })));
+  ipcMain.handle('watcher:thumbtack:start', async () => {
+    try {
+      await thumbtack.start(30);
+      await makeHidden('thumbtack', startUrlFor('thumbtack'));
+      return { ok: true };
+    } catch (e) { return { ok: false, error: (e as Error).message }; }
+  });
   ipcMain.handle('watcher:thumbtack:stop', async () => thumbtack.stop());
   ipcMain.handle('watcher:status', async () => ({
     yelp: { status: yelp.status, lastTick: yelp.lastTick, lastError: yelp.lastError },
@@ -87,7 +102,7 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   yelp.stop();
   thumbtack.stop();
-  stopChromeFor('yelp');
-  stopChromeFor('thumbtack');
+  void stopChromeFor('yelp');
+  void stopChromeFor('thumbtack');
   if (process.platform !== 'darwin') app.quit();
 });

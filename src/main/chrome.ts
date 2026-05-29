@@ -33,9 +33,30 @@ export interface RunningChrome {
   pid: number;
   port: number;
   proc: ChildProcess;
+  hidden: boolean;
 }
 
 const running = new Map<PlatformId['id'], RunningChrome>();
+
+async function waitForCdpReady(port: number, timeoutMs = 15_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const r = await fetch(`http://localhost:${port}/json/version`);
+      if (r.ok) return true;
+    } catch { /* not up yet */ }
+    await new Promise((res) => setTimeout(res, 250));
+  }
+  return false;
+}
+
+async function waitForProcExit(proc: ChildProcess, timeoutMs = 8_000): Promise<void> {
+  if (proc.exitCode != null) return;
+  return new Promise((resolve) => {
+    const t = setTimeout(() => resolve(), timeoutMs);
+    proc.once('exit', () => { clearTimeout(t); resolve(); });
+  });
+}
 
 // Pick a free port per platform so two Chromes can run side-by-side.
 function portFor(p: PlatformId['id']): number {
@@ -48,8 +69,11 @@ function profileDirFor(p: PlatformId['id']): string {
   return dir;
 }
 
-export function startChromeFor(platform: PlatformId['id'], startUrl: string): RunningChrome | { error: string } {
-  // Reuse existing instance if still alive
+export function startChromeFor(
+  platform: PlatformId['id'],
+  startUrl: string,
+  opts: { hidden?: boolean } = {},
+): RunningChrome | { error: string } {
   const existing = running.get(platform);
   if (existing && !existing.proc.killed) return existing;
 
@@ -59,34 +83,71 @@ export function startChromeFor(platform: PlatformId['id'], startUrl: string): Ru
   }
   const port = portFor(platform);
   const profile = profileDirFor(platform);
+  const hidden = !!opts.hidden;
 
-  const proc = spawn(chrome, [
+  const args = [
     `--remote-debugging-port=${port}`,
     `--user-data-dir=${profile}`,
     '--no-first-run',
     '--no-default-browser-check',
-    '--disable-features=GoogleApiKeyConfigurationCheck',
-    startUrl,
-  ], { detached: false, stdio: 'ignore' });
+  ];
+  if (hidden) {
+    // Off-screen + minimum visible window so the user never sees polling.
+    args.push('--window-position=-32000,-32000', '--window-size=1280,800');
+  }
+  args.push(startUrl);
 
-  const ret: RunningChrome = { platform, pid: proc.pid ?? -1, port, proc };
+  const proc = spawn(chrome, args, { detached: false, stdio: 'ignore' });
+
+  const ret: RunningChrome = { platform, pid: proc.pid ?? -1, port, proc, hidden };
   running.set(platform, ret);
   proc.on('exit', () => running.delete(platform));
   return ret;
 }
 
-export function stopChromeFor(platform: PlatformId['id']): void {
+export async function stopChromeFor(platform: PlatformId['id']): Promise<void> {
   const r = running.get(platform);
   if (!r) return;
   try { r.proc.kill(); } catch { /* noop */ }
+  await waitForProcExit(r.proc);
   running.delete(platform);
 }
 
-export function listChromes(): Array<{ platform: PlatformId['id']; port: number; running: boolean }> {
+// Restart Chrome in hidden mode. Keeps the same user-data-dir so the operator's login
+// session survives. Used after the watcher starts so the user no longer sees polling.
+export async function makeHidden(platform: PlatformId['id'], startUrl: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  await stopChromeFor(platform);
+  // Brief settle so user-data-dir lock releases
+  await new Promise((res) => setTimeout(res, 500));
+  const r = startChromeFor(platform, startUrl, { hidden: true });
+  if ('error' in r) return { ok: false, error: r.error };
+  const ready = await waitForCdpReady(r.port);
+  return ready ? { ok: true } : { ok: false, error: 'Hidden Chrome did not come up in time' };
+}
+
+// Restart Chrome visibly. Use for re-login / pause-and-show.
+export async function showWindow(platform: PlatformId['id'], startUrl: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  await stopChromeFor(platform);
+  await new Promise((res) => setTimeout(res, 500));
+  const r = startChromeFor(platform, startUrl, { hidden: false });
+  if ('error' in r) return { ok: false, error: r.error };
+  const ready = await waitForCdpReady(r.port);
+  return ready ? { ok: true } : { ok: false, error: 'Chrome did not come up in time' };
+}
+
+export function isHidden(platform: PlatformId['id']): boolean {
+  return !!running.get(platform)?.hidden;
+}
+
+export function listChromes(): Array<{ platform: PlatformId['id']; port: number; running: boolean; hidden: boolean }> {
   return (['yelp', 'thumbtack'] as const).map((p) => {
     const r = running.get(p);
-    return { platform: p, port: portFor(p), running: !!r && !r.proc.killed };
+    return { platform: p, port: portFor(p), running: !!r && !r.proc.killed, hidden: !!r?.hidden };
   });
+}
+
+export function startUrlFor(platform: PlatformId['id']): string {
+  return platform === 'yelp' ? 'https://biz.yelp.com/login' : 'https://www.thumbtack.com/login';
 }
 
 // Opens an external link the user clicks — used for "Help" buttons in the UI.

@@ -21,7 +21,9 @@ const api = {
   chrome: {
     start: (source: Source) => ipcRenderer.invoke('chrome:start', source) as Promise<{ ok: true; port: number } | { ok: false; error: string }>,
     stop: (source: Source) => ipcRenderer.invoke('chrome:stop', source) as Promise<void>,
-    list: () => ipcRenderer.invoke('chrome:list') as Promise<Array<{ platform: Source; port: number; running: boolean }>>,
+    list: () => ipcRenderer.invoke('chrome:list') as Promise<Array<{ platform: Source; port: number; running: boolean; hidden: boolean }>>,
+    hide: (source: Source) => ipcRenderer.invoke('chrome:hide', source) as Promise<{ ok: true } | { ok: false; error: string }>,
+    show: (source: Source) => ipcRenderer.invoke('chrome:show', source) as Promise<{ ok: true } | { ok: false; error: string }>,
   },
   watcher: {
     yelpSetBiz: (encid: string) => ipcRenderer.invoke('watcher:yelp:set-biz', encid) as Promise<void>,
