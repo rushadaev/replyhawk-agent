@@ -76,17 +76,18 @@ app.whenReady().then(() => {
   ipcMain.handle('watcher:yelp:start', async () => {
     try {
       await yelp.start(30);
-      // Once polling is up, swap the visible login window for an off-screen one.
-      await makeHidden('yelp', startUrlFor('yelp'));
-      return { ok: true, bizEncid: yelp.getBiz() };
+      const h = await makeHidden('yelp', startUrlFor('yelp'));
+      if (!h.ok) console.warn('[yelp] makeHidden failed:', h.error);
+      return { ok: true, bizEncid: yelp.getBiz(), hidden: h.ok };
     } catch (e) { return { ok: false, error: (e as Error).message }; }
   });
   ipcMain.handle('watcher:yelp:stop', async () => yelp.stop());
   ipcMain.handle('watcher:thumbtack:start', async () => {
     try {
       await thumbtack.start(30);
-      await makeHidden('thumbtack', startUrlFor('thumbtack'));
-      return { ok: true };
+      const h = await makeHidden('thumbtack', startUrlFor('thumbtack'));
+      if (!h.ok) console.warn('[thumbtack] makeHidden failed:', h.error);
+      return { ok: true, hidden: h.ok };
     } catch (e) { return { ok: false, error: (e as Error).message }; }
   });
   ipcMain.handle('watcher:thumbtack:stop', async () => thumbtack.stop());
