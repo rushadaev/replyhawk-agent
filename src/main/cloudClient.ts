@@ -25,3 +25,18 @@ export async function postEvent(
   const r = await cloudFetch(`/api/leads/${leadId}/events`, { method: 'POST', body: JSON.stringify(body) });
   if (!r.ok) throw new Error(`POST events ${r.status}: ${await r.text()}`);
 }
+
+export interface OutboundMessage {
+  sender: 'customer' | 'business' | 'ai' | 'system';
+  text: string;
+  source?: string;
+  sourceMessageId?: string;
+  sentAt?: string;
+}
+
+// Bulk-push the conversation; cloud dedups on sourceMessageId so re-sending is safe.
+export async function postMessages(leadId: string, messages: OutboundMessage[]): Promise<void> {
+  if (!messages.length) return;
+  const r = await cloudFetch(`/api/leads/${leadId}/messages`, { method: 'POST', body: JSON.stringify({ messages }) });
+  if (!r.ok) throw new Error(`POST messages ${r.status}: ${await r.text()}`);
+}

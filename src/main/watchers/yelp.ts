@@ -6,7 +6,7 @@
 
 import { chromium, BrowserContext, Page } from 'playwright-core';
 import { extractInbox, extractMessages, extractLeadDetails, type YelpInboxItem } from '../extractors/yelp';
-import { postLead, postEvent } from '../cloudClient';
+import { postLead, postEvent, postMessages } from '../cloudClient';
 
 interface SnapshotEntry { encid: string; lastEventTime: string | null }
 
@@ -173,6 +173,13 @@ export class YelpWatcher {
       notes: details.notes || it.previewText,
       sourcePayload: { inboxItem: it, urgency: details.urgency, communicationPreference: details.communicationPreference },
     });
+    // Push the full conversation as structured messages (cloud dedups on sourceMessageId).
+    if (messages.length) {
+      await postMessages(lead.id, messages.map((m) => ({
+        sender: m.sender, text: m.text ?? '', source: 'yelp',
+        sourceMessageId: m.id, sentAt: m.createdAt ?? undefined,
+      })).filter((m) => m.text)).catch(() => undefined);
+    }
     if (lastCustomer && !lead.duplicate) {
       await postEvent(lead.id, {
         type: 'message_received', actor: 'yelp_watcher',

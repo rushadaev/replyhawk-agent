@@ -3,7 +3,7 @@
 
 import { chromium, BrowserContext, Page } from 'playwright-core';
 import { extractThumbtackLead, ThumbtackLead } from '../extractors/thumbtack';
-import { postLead, postEvent } from '../cloudClient';
+import { postLead, postEvent, postMessages } from '../cloudClient';
 
 export interface ThumbtackLog { at: number; ingested: number; total: number; note?: string }
 
@@ -160,6 +160,12 @@ export class ThumbtackWatcher {
       notes: lead.notes,
       sourcePayload: { panelFields: lead.panelFields, messageCount: lead.messages.length },
     });
+    if (lead.messages.length) {
+      await postMessages(posted.id, lead.messages.map((m) => ({
+        sender: m.sender, text: m.text, source: 'thumbtack',
+        sourceMessageId: m.id, sentAt: m.createdAt ?? undefined,
+      })).filter((m) => m.text)).catch(() => undefined);
+    }
     const lastCustomer = [...lead.messages].reverse().find((m) => m.sender === 'customer');
     if (lastCustomer && !posted.duplicate) {
       await postEvent(posted.id, {
