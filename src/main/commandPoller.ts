@@ -4,6 +4,7 @@
 
 import { cloudFetch } from './cloudClient';
 import { sendYelpReply } from './senders/yelp';
+import { sendThumbtackReply } from './senders/thumbtack';
 
 interface ReplyCommand {
   id: string;
@@ -69,6 +70,8 @@ export class CommandPoller {
       let result: { ok: true } | { ok: false; error: string };
       if (cmd.source === 'yelp') {
         result = await sendYelpReply(this.ports.yelp, cmd.sourceUrl, cmd.text);
+      } else if (cmd.source === 'thumbtack') {
+        result = await sendThumbtackReply(this.ports.thumbtack, cmd.sourceUrl, cmd.text);
       } else {
         result = { ok: false, error: `sender for ${cmd.source} not implemented yet` };
       }
