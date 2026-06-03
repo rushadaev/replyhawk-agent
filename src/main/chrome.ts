@@ -42,7 +42,7 @@ async function waitForCdpReady(port: number, timeoutMs = 15_000): Promise<boolea
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      const r = await fetch(`http://localhost:${port}/json/version`);
+      const r = await fetch(`http://127.0.0.1:${port}/json/version`);
       if (r.ok) return true;
     } catch { /* not up yet */ }
     await new Promise((res) => setTimeout(res, 250));

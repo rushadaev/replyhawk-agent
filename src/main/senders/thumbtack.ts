@@ -10,7 +10,7 @@ import { chromium, BrowserContext } from 'playwright-core';
 export async function sendThumbtackReply(cdpPort: number, threadUrl: string, text: string): Promise<{ ok: true } | { ok: false; error: string }> {
   let browser;
   try {
-    browser = await chromium.connectOverCDP(`http://localhost:${cdpPort}`);
+    browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
     const ctx: BrowserContext = browser.contexts()[0] ?? (await browser.newContext());
     const page = await ctx.newPage();
     try {

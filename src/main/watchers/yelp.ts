@@ -131,7 +131,7 @@ export class YelpWatcher {
   }
 
   private async withContext<T>(fn: (ctx: BrowserContext) => Promise<T>): Promise<T> {
-    const browser = await chromium.connectOverCDP(`http://localhost:${this.cdpPort}`);
+    const browser = await chromium.connectOverCDP(`http://127.0.0.1:${this.cdpPort}`);
     try {
       const ctx = browser.contexts()[0] ?? (await browser.newContext());
       return await fn(ctx);
