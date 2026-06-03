@@ -104,6 +104,7 @@ app.whenReady().then(() => {
   ipcMain.handle('watcher:thumbtack:start', async () => {
     try {
       await thumbtack.start(30);
+      poller.start(15); // start sending queued replies once any watcher is running
       const h = await makeHidden('thumbtack', startUrlFor('thumbtack'));
       if (!h.ok) console.warn('[thumbtack] makeHidden failed:', h.error);
       return { ok: true, hidden: h.ok };

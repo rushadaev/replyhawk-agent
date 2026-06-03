@@ -64,7 +64,9 @@ export class CommandPoller {
     const r = await cloudFetch('/api/agent/commands');
     if (!r.ok) throw new Error(`GET commands ${r.status}`);
     const { commands } = (await r.json()) as { commands: ReplyCommand[] };
+    if (commands.length) console.log(`[poller] ${commands.length} pending reply command(s)`);
     for (const cmd of commands) {
+      console.log(`[poller] sending ${cmd.source} reply for lead ${cmd.leadId} → ${cmd.sourceUrl}`);
       if (!cmd.sourceUrl) { await this.report(cmd.id, 'failed', 'no sourceUrl'); continue; }
       await this.report(cmd.id, 'sending');
       let result: { ok: true } | { ok: false; error: string };
@@ -75,8 +77,8 @@ export class CommandPoller {
       } else {
         result = { ok: false, error: `sender for ${cmd.source} not implemented yet` };
       }
-      if (result.ok) { await this.report(cmd.id, 'sent'); this.sentCount++; }
-      else { await this.report(cmd.id, 'failed', result.error); }
+      if (result.ok) { console.log(`[poller] ✓ sent ${cmd.id}`); await this.report(cmd.id, 'sent'); this.sentCount++; }
+      else { console.warn(`[poller] ✗ failed ${cmd.id}: ${result.error}`); await this.report(cmd.id, 'failed', result.error); }
     }
   }
 }
