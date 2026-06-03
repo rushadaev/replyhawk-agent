@@ -3,7 +3,7 @@
 
 import { chromium, BrowserContext, Page } from 'playwright-core';
 import { extractThumbtackLead, ThumbtackLead } from '../extractors/thumbtack';
-import { postLead, postEvent, postMessages } from '../cloudClient';
+import { postLead, postEvent, postMessages, knownLeadIds } from '../cloudClient';
 
 export interface ThumbtackLog { at: number; ingested: number; total: number; note?: string }
 
@@ -24,6 +24,41 @@ export class ThumbtackWatcher {
     try {
       const r = await this.pollOnceWithResult();
       return { ok: true, ...r };
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
+  }
+
+  // Force-ingest every thread in the inbox, ignoring the seen-set. Cloud dedups.
+  async syncAll(): Promise<{ ok: true; ingested: number; total: number } | { ok: false; error: string }> {
+    try {
+      this.seen.clear();          // forget everything so pollOnce treats all as new…
+      // …but pollOnce skips first-run; prime seen as "non-empty" by ingesting directly:
+      let ingested = 0; let total = 0;
+      await this.withContext(async (ctx) => {
+        const page = await ctx.newPage();
+        try {
+          await page.goto('https://www.thumbtack.com/pro-inbox/', { waitUntil: 'domcontentloaded' });
+          await page.waitForTimeout(3000);
+          const ids: string[] = await page.evaluate(() => {
+            const out = new Set<string>();
+            for (const a of Array.from(document.querySelectorAll('a[href]'))) {
+              const m = (a.getAttribute('href') ?? '').match(/\/pro-inbox\/messages\/(\d+)/);
+              if (m) out.add(m[1]);
+            }
+            return Array.from(out);
+          });
+          total = ids.length;
+          for (const id of ids) {
+            this.seen.add(id);
+            try { await this.ingestOne(page, id); ingested++; } catch { /* skip */ }
+          }
+        } finally {
+          await page.close().catch(() => undefined);
+        }
+      });
+      this.log.unshift({ at: Date.now(), ingested, total, note: `Synced all (${ingested}/${total})` });
+      return { ok: true, ingested, total };
     } catch (e) {
       return { ok: false, error: (e as Error).message };
     }
@@ -86,9 +121,6 @@ export class ThumbtackWatcher {
           return Array.from(out);
         });
         total = ids.length;
-        const isFirstRun = this.seen.size === 0;
-        const newOnes = ids.filter((id) => !this.seen.has(id));
-        for (const id of ids) this.seen.add(id);
 
         // Capture a screenshot of the inbox for the UI.
         try {
@@ -99,9 +131,11 @@ export class ThumbtackWatcher {
           console.warn('[thumbtack] screenshot failed:', (e as Error).message);
         }
 
-        // On first run after startup, just record what's already in the inbox.
-        if (isFirstRun) return;
-        for (const id of newOnes) {
+        // Reconcile against the cloud: ingest any thread the cloud doesn't have yet.
+        // Self-healing — no first-run skip, survives restarts.
+        const known = await knownLeadIds('thumbtack').catch(() => new Set<string>());
+        const missing = ids.filter((id) => !known.has(id));
+        for (const id of missing) {
           try { await this.ingestOne(page, id); ingested++; }
           catch (e) { console.error('thumbtack ingest failed', id, (e as Error).message); }
         }

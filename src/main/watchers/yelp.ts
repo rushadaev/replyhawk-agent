@@ -6,7 +6,7 @@
 
 import { chromium, BrowserContext, Page } from 'playwright-core';
 import { extractInbox, extractMessages, extractLeadDetails, type YelpInboxItem } from '../extractors/yelp';
-import { postLead, postEvent, postMessages } from '../cloudClient';
+import { postLead, postEvent, postMessages, knownLeadIds } from '../cloudClient';
 
 interface SnapshotEntry { encid: string; lastEventTime: string | null }
 
@@ -45,6 +45,40 @@ export class YelpWatcher {
 
   setBiz(encid: string): void { this.bizEncid = encid; }
   getBiz(): string | null { return this.bizEncid; }
+
+  // Force-ingest EVERY lead currently in the inbox, ignoring the snapshot.
+  // Used by the "Sync all" button to pull in leads that predate Start Watching.
+  // Cloud dedups on (source, sourceLeadId) so re-running is safe.
+  async syncAll(): Promise<{ ok: true; ingested: number; total: number } | { ok: false; error: string }> {
+    try {
+      if (!this.bizEncid) {
+        const d = await this.detectBizEncid();
+        if (!d) throw new Error('No Yelp tab found — open biz.yelp.com first');
+        this.bizEncid = d;
+      }
+      let ingested = 0; let total = 0;
+      await this.withContext(async (ctx) => {
+        const page = await ctx.newPage();
+        try {
+          await page.goto(`https://biz.yelp.com/leads_center/${this.bizEncid}/leads`, { waitUntil: 'domcontentloaded' });
+          const state = await page.evaluate(() => (window as unknown as { yelp?: { react_apollo_state?: Record<string, unknown> } }).yelp?.react_apollo_state || null);
+          if (!state) throw new Error('Apollo state not found — login expired?');
+          const items = extractInbox(state as Record<string, Record<string, unknown>>, this.bizEncid!);
+          total = items.length;
+          for (const it of items) {
+            this.snapshot.set(it.leadEncid, { encid: it.leadEncid, lastEventTime: it.lastEventTime });
+            try { await this.ingestLead(page, it); ingested++; } catch { /* skip one */ }
+          }
+        } finally {
+          await page.close().catch(() => undefined);
+        }
+      });
+      this.log.unshift({ at: Date.now(), ingested, total, note: `Synced all (${ingested}/${total})` });
+      return { ok: true, ingested, total };
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
+  }
 
   // Inspect every tab in the attached Chrome and pull the encid out of any
   // biz.yelp.com URL — works whether the operator is on /home/<id>/, /leads_center/<id>/, etc.
@@ -124,14 +158,7 @@ export class YelpWatcher {
         const state = await page.evaluate(() => (window as unknown as { yelp?: { react_apollo_state?: Record<string, unknown> } }).yelp?.react_apollo_state || null);
         if (!state) throw new Error('Apollo state not found — login expired?');
         const items = extractInbox(state as Record<string, Record<string, unknown>>, this.bizEncid!);
-        const isFirstRun = this.snapshot.size === 0;
-        const changed: YelpInboxItem[] = [];
-        for (const it of items) {
-          const prev = this.snapshot.get(it.leadEncid);
-          if (!prev) changed.push(it);
-          else if (prev.lastEventTime !== it.lastEventTime && it.latestIsCustomer) changed.push(it);
-          this.snapshot.set(it.leadEncid, { encid: it.leadEncid, lastEventTime: it.lastEventTime });
-        }
+
         // Capture a screenshot for the UI so the operator can see what we see.
         try {
           await page.setViewportSize({ width: 1280, height: 800 }).catch(() => undefined);
@@ -141,8 +168,20 @@ export class YelpWatcher {
           console.warn('[yelp] screenshot failed:', (e as Error).message);
         }
 
-        report(isFirstRun ? 0 : changed.length, items.length);
-        if (isFirstRun) return;
+        // Ask the cloud which leads it already has. Ingest anything in the inbox that's
+        // missing — plus any known lead whose newest message changed (new customer reply).
+        // This is self-healing: no first-run skip, survives restarts, no stale snapshot.
+        const known = await knownLeadIds('yelp').catch(() => new Set<string>());
+        const changed: YelpInboxItem[] = [];
+        for (const it of items) {
+          const prev = this.snapshot.get(it.leadEncid);
+          const isNewToCloud = !known.has(it.leadEncid);
+          const hasNewMessage = !!prev && prev.lastEventTime !== it.lastEventTime && it.latestIsCustomer;
+          if (isNewToCloud || hasNewMessage) changed.push(it);
+          this.snapshot.set(it.leadEncid, { encid: it.leadEncid, lastEventTime: it.lastEventTime });
+        }
+
+        report(changed.length, items.length);
         for (const it of changed) {
           await this.ingestLead(page, it);
         }

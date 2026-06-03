@@ -11,6 +11,14 @@ export async function cloudFetch(path: string, init: RequestInit = {}): Promise<
   });
 }
 
+// Which sourceLeadIds does the cloud already have for this source/business?
+export async function knownLeadIds(source: string): Promise<Set<string>> {
+  const r = await cloudFetch(`/api/leads/known?source=${encodeURIComponent(source)}`);
+  if (!r.ok) throw new Error(`GET known ${r.status}`);
+  const { ids } = (await r.json()) as { ids: string[] };
+  return new Set(ids);
+}
+
 export async function postLead(payload: Record<string, unknown>): Promise<{ id: string; duplicate: boolean }> {
   const r = await cloudFetch('/api/leads', { method: 'POST', body: JSON.stringify(payload) });
   if (!r.ok) throw new Error(`POST /api/leads ${r.status}: ${await r.text()}`);
