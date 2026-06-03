@@ -7,12 +7,15 @@ import { heartbeat } from './heartbeat';
 import { startChromeFor, stopChromeFor, listChromes, makeHidden, showWindow, startUrlFor, type PlatformId } from './chrome';
 import { YelpWatcher } from './watchers/yelp';
 import { ThumbtackWatcher } from './watchers/thumbtack';
+import { CommandPoller } from './commandPoller';
 
 let mainWindow: BrowserWindow | null = null;
 
 // One watcher instance per source, lazily started after the user logs in.
 const yelp = new YelpWatcher(19222);
 const thumbtack = new ThumbtackWatcher(19223);
+// Polls the cloud for outbound reply commands and sends them via Chrome.
+const poller = new CommandPoller({ yelp: 19222, thumbtack: 19223 });
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -87,6 +90,7 @@ app.whenReady().then(() => {
   ipcMain.handle('watcher:yelp:start', async () => {
     try {
       await yelp.start(30);
+      poller.start(15); // start sending queued replies once we're watching
       const h = await makeHidden('yelp', startUrlFor('yelp'));
       if (!h.ok) console.warn('[yelp] makeHidden failed:', h.error);
       return { ok: true, bizEncid: yelp.getBiz(), hidden: h.ok };
@@ -111,6 +115,7 @@ app.whenReady().then(() => {
   ipcMain.handle('watcher:status', async () => ({
     yelp: { status: yelp.status, lastTick: yelp.lastTick, lastError: yelp.lastError },
     thumbtack: { status: thumbtack.status, lastTick: thumbtack.lastTick, lastError: thumbtack.lastError },
+    poller: { status: poller.status, lastTick: poller.lastTick, lastError: poller.lastError, sentCount: poller.sentCount },
   }));
 
   createWindow();
@@ -120,6 +125,7 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   yelp.stop();
   thumbtack.stop();
+  poller.stop();
   void stopChromeFor('yelp');
   void stopChromeFor('thumbtack');
   if (process.platform !== 'darwin') app.quit();
