@@ -35,25 +35,33 @@ export async function sendThumbtackReply(cdpPort: number, threadUrl: string, tex
         await page.waitForTimeout(200);
       }
 
-      const sendResponse = page.waitForResponse(
-        (r) => /app\.thumbtack\.com\/graphql/.test(r.url()) && r.request().method() === 'POST' && r.ok(),
+      // Watch specifically for the send mutation (not the constant tracking GraphQL).
+      const sendMutation = page.waitForResponse(
+        async (r) => {
+          if (!/app\.thumbtack\.com\/graphql/.test(r.url()) || r.request().method() !== 'POST' || !r.ok()) return false;
+          const op = (() => { try { return (JSON.parse(r.request().postData() || '{}') as { operationName?: string }).operationName ?? ''; } catch { return ''; } })();
+          return /send|message|reply|negotiation/i.test(op);
+        },
         { timeout: 20_000 },
       ).catch(() => null);
 
       await sendBtn.click({ timeout: 5_000 }).catch(async () => {
-        // Fallback: Cmd/Ctrl+Enter sometimes submits Thumbtack composer
         await textarea.press('Meta+Enter').catch(() => undefined);
       });
 
-      const resp = await sendResponse;
-      if (!resp) return { ok: false, error: 'No GraphQL confirmation after Send — message may not have posted.' };
-
-      // Belt-and-suspenders: composer should clear on success.
-      await page.waitForFunction(() => {
+      // PRIMARY success signal: the composer actually empties. This only happens when
+      // Thumbtack accepts the send — a tracking GraphQL call can't fake it.
+      const cleared = await page.waitForFunction(() => {
         const t = document.querySelector('textarea[placeholder="Type message" i]') as HTMLTextAreaElement | null;
-        return !t || t.value === '';
-      }, { timeout: 5_000 }).catch(() => undefined);
+        return !!t && t.value.trim() === '';
+      }, { timeout: 12_000 }).then(() => true).catch(() => false);
 
+      const mutation = await sendMutation;
+
+      if (!cleared && !mutation) {
+        return { ok: false, error: 'Composer did not clear and no send mutation seen — message likely did NOT post.' };
+      }
+      // Cleared composer is the strong signal; mutation alone is a weaker fallback.
       return { ok: true };
     } finally {
       await page.close().catch(() => undefined);
