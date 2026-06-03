@@ -15,7 +15,12 @@ mac:
   category: public.app-category.business
   hardenedRuntime: true
   gatekeeperAssess: false
-  notarize: false  # set true once APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID are in env
+  # Sign with the Developer ID Application cert. electron-builder auto-selects it from
+  # the keychain. Notarization is driven by env vars (see build:mac-signed script):
+  #   APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID
+  notarize:
+    teamId: ${env.APPLE_TEAM_ID}
+  entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     LSUIElement: 0

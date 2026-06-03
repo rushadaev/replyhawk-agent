@@ -47,6 +47,17 @@ app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.replyhawk.agent');
   app.on('browser-window-created', (_, w) => optimizer.watchWindowShortcuts(w));
 
+  // Start automatically when the operator logs in, so a reboot doesn't silently
+  // stop lead-watching. Only meaningful in the packaged app; harmless in dev.
+  if (app.isPackaged) {
+    app.setLoginItemSettings({ openAtLogin: true, openAsHidden: false });
+  }
+  ipcMain.handle('app:get-login-item', async () => app.getLoginItemSettings().openAtLogin);
+  ipcMain.handle('app:set-login-item', async (_e, enabled: boolean) => {
+    app.setLoginItemSettings({ openAtLogin: enabled, openAsHidden: false });
+    return app.getLoginItemSettings().openAtLogin;
+  });
+
   // Auth
   ipcMain.handle('auth:get-token', async () => {
     const t = await getToken();
