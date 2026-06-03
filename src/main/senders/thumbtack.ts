@@ -16,31 +16,26 @@ export async function sendThumbtackReply(cdpPort: number, threadUrl: string, tex
     try {
       await page.goto(threadUrl, { waitUntil: 'domcontentloaded' });
 
-      const textarea = page.locator('textarea[placeholder="Type message" i]');
+      const textarea = page.locator('textarea[placeholder="Type message" i]').first();
       await textarea.waitFor({ state: 'visible', timeout: 15_000 });
+      await textarea.scrollIntoViewIfNeeded();
       await textarea.click();
       // Type so React's onChange fires and enables the send button.
-      // (fill() can leave controlled inputs without an input event in some builds.)
       await textarea.fill('');
       await textarea.pressSequentially(text, { delay: 8 });
+      await page.waitForTimeout(300);
 
-      // The send button is the first <button> after the textarea. It enables once there's text.
-      const sendBtn = textarea.locator('xpath=following::button[1]');
-      // Wait until it's no longer disabled (up to 5s).
-      const deadline = Date.now() + 5000;
-      while (Date.now() < deadline) {
-        const disabled = await sendBtn.getAttribute('disabled').catch(() => null);
-        const ariaDisabled = await sendBtn.getAttribute('aria-disabled').catch(() => null);
-        if (disabled === null && ariaDisabled !== 'true') break;
-        await page.waitForTimeout(200);
-      }
+      // VERIFIED send button: the paper-plane icon — a button whose svg path starts "M3.6".
+      // (The first button after the textarea is a "Close alert" button, not send.)
+      const sendBtn = page.locator('button:has(svg path[d^="M3.6"])').first();
+      await sendBtn.waitFor({ state: 'visible', timeout: 5_000 }).catch(() => undefined);
 
-      // Watch specifically for the send mutation (not the constant tracking GraphQL).
+      // The real send mutation is "SendMessage". Watch for it specifically.
       const sendMutation = page.waitForResponse(
         async (r) => {
           if (!/app\.thumbtack\.com\/graphql/.test(r.url()) || r.request().method() !== 'POST' || !r.ok()) return false;
           const op = (() => { try { return (JSON.parse(r.request().postData() || '{}') as { operationName?: string }).operationName ?? ''; } catch { return ''; } })();
-          return /send|message|reply|negotiation/i.test(op);
+          return op === 'SendMessage';
         },
         { timeout: 20_000 },
       ).catch(() => null);
