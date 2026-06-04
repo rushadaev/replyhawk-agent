@@ -10,6 +10,10 @@ import { ThumbtackWatcher } from './watchers/thumbtack';
 import { CommandPoller } from './commandPoller';
 import { initAutoUpdate } from './updater';
 
+// Brand the app name early so the macOS menu + dock say "ReplyHawk Agent" (not "Electron")
+// even in dev. (Packaged builds get this from productName; dev needs it set explicitly.)
+app.setName('ReplyHawk Agent');
+
 let mainWindow: BrowserWindow | null = null;
 
 // One watcher instance per source, lazily started after the user logs in.
@@ -49,6 +53,10 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.replyhawk.agent');
+  // Show the ReplyHawk icon in the dock during dev (packaged build uses build/icon.icns).
+  if (process.platform === 'darwin' && app.dock) {
+    try { app.dock.setIcon(join(__dirname, '../../resources/icon.png')); } catch { /* noop */ }
+  }
   app.on('browser-window-created', (_, w) => optimizer.watchWindowShortcuts(w));
 
   // Start automatically when the operator logs in, so a reboot doesn't silently
