@@ -8,6 +8,7 @@ import { startChromeFor, stopChromeFor, listChromes, makeHidden, showWindow, sta
 import { YelpWatcher } from './watchers/yelp';
 import { ThumbtackWatcher } from './watchers/thumbtack';
 import { CommandPoller } from './commandPoller';
+import { initAutoUpdate } from './updater';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -121,6 +122,7 @@ app.whenReady().then(() => {
   }));
 
   createWindow();
+  initAutoUpdate();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 
