@@ -17,6 +17,10 @@ const api = {
       | { ok: true; ts: number }
       | { ok: false; reason: 'no_token' | 'unauthorized' | 'unreachable'; detail?: string }
     >,
+    snapshot: () => ipcRenderer.invoke('cloud:snapshot') as Promise<
+      | { ok: true; counts: Record<string, number>; total: number; callQueue: Array<{ id: string; name: string; source: string; status: string }> }
+      | { ok: false; error: string }
+    >,
   },
   chrome: {
     start: (source: Source) => ipcRenderer.invoke('chrome:start', source) as Promise<{ ok: true; port: number } | { ok: false; error: string }>,
@@ -42,7 +46,13 @@ const api = {
     status: () => ipcRenderer.invoke('watcher:status') as Promise<{
       yelp: { status: string; lastTick?: number; lastError?: string };
       thumbtack: { status: string; lastTick?: number; lastError?: string };
+      poller: { status: string; lastTick?: number; lastError?: string; sentCount: number; failedCount: number; pendingCount: number };
     }>,
+  },
+  poller: {
+    log: () => ipcRenderer.invoke('poller:log') as Promise<Array<{
+      at: number; leadId: string; source: string; status: 'sent' | 'failed'; text: string; error?: string;
+    }>>,
   },
 };
 

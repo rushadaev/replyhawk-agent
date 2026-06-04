@@ -8,6 +8,7 @@ import { startChromeFor, stopChromeFor, listChromes, makeHidden, showWindow, sta
 import { YelpWatcher } from './watchers/yelp';
 import { ThumbtackWatcher } from './watchers/thumbtack';
 import { CommandPoller } from './commandPoller';
+import { cloudFetch } from './cloudClient';
 import { initAutoUpdate } from './updater';
 
 // Brand the app name early so the macOS menu + dock say "ReplyHawk Agent" (not "Electron")
@@ -126,8 +127,41 @@ app.whenReady().then(() => {
   ipcMain.handle('watcher:status', async () => ({
     yelp: { status: yelp.status, lastTick: yelp.lastTick, lastError: yelp.lastError },
     thumbtack: { status: thumbtack.status, lastTick: thumbtack.lastTick, lastError: thumbtack.lastError },
-    poller: { status: poller.status, lastTick: poller.lastTick, lastError: poller.lastError, sentCount: poller.sentCount },
+    poller: {
+      status: poller.status, lastTick: poller.lastTick, lastError: poller.lastError,
+      sentCount: poller.sentCount, failedCount: poller.failedCount, pendingCount: poller.pendingCount,
+    },
   }));
+
+  // Reply queue activity (recent send attempts) for the in-app panel.
+  ipcMain.handle('poller:log', async () => poller.recent(12));
+
+  // Read-only pipeline snapshot from the cloud (the "call queue" lives server-side:
+  // ElevenLabs places the calls, so we surface stage counts + the call-relevant leads).
+  ipcMain.handle('cloud:snapshot', async () => {
+    try {
+      const r = await cloudFetch('/api/leads?limit=200');
+      if (!r.ok) return { ok: false as const, error: `GET leads ${r.status}` };
+      const { leads } = (await r.json()) as {
+        leads: Array<{ id: string; name?: string | null; source?: string | null; status: string; updatedAt?: string }>;
+      };
+      const counts: Record<string, number> = {};
+      for (const l of leads) counts[l.status] = (counts[l.status] ?? 0) + 1;
+      const pick = (statuses: string[]): Array<{ id: string; name: string; source: string; status: string }> =>
+        leads.filter((l) => statuses.includes(l.status))
+          .slice(0, 12)
+          .map((l) => ({ id: l.id, name: l.name ?? 'Unknown', source: l.source ?? '—', status: l.status }));
+      return {
+        ok: true as const,
+        counts,
+        total: leads.length,
+        // "Call queue": leads queued to be called (ready) or mid-call (calling).
+        callQueue: pick(['ready', 'calling']),
+      };
+    } catch (e) {
+      return { ok: false as const, error: (e as Error).message };
+    }
+  });
 
   createWindow();
   initAutoUpdate();

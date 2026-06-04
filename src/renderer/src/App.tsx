@@ -5,6 +5,11 @@ type Heartbeat =
   | { ok: false; reason: 'no_token' | 'unauthorized' | 'unreachable'; detail?: string };
 
 type Status = { status: string; lastTick?: number; lastError?: string };
+type PollerStatus = Status & { sentCount: number; failedCount: number; pendingCount: number };
+type PollerLog = Array<{ at: number; leadId: string; source: string; status: 'sent' | 'failed'; text: string; error?: string }>;
+type Snapshot =
+  | { ok: true; counts: Record<string, number>; total: number; callQueue: Array<{ id: string; name: string; source: string; status: string }> }
+  | { ok: false; error: string };
 type Source = 'yelp' | 'thumbtack';
 
 export default function App(): React.JSX.Element {
@@ -16,7 +21,9 @@ export default function App(): React.JSX.Element {
   const [verifyError, setVerifyError] = useState<string | null>(null);
 
   const [chromes, setChromes] = useState<Array<{ platform: Source; running: boolean; hidden: boolean }>>([]);
-  const [watcher, setWatcher] = useState<{ yelp: Status; thumbtack: Status } | null>(null);
+  const [watcher, setWatcher] = useState<{ yelp: Status; thumbtack: Status; poller?: PollerStatus } | null>(null);
+  const [pollerLog, setPollerLog] = useState<PollerLog>([]);
+  const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [yelpLog, setYelpLog] = useState<Array<{ at: number; ingested: number; total: number; note?: string }>>([]);
   const [yelpShot, setYelpShot] = useState<{ at: number; b64: string } | null>(null);
   const [showYelpShot, setShowYelpShot] = useState(false);
@@ -47,10 +54,13 @@ export default function App(): React.JSX.Element {
       const yShot = (showYelpShot && w.yelp.status !== 'idle') ? await window.api.watcher.yelpScreenshot() : null;
       const tLog = w.thumbtack.status !== 'idle' ? await window.api.watcher.thumbtackLog() : [];
       const tShot = (showTtShot && w.thumbtack.status !== 'idle') ? await window.api.watcher.thumbtackScreenshot() : null;
+      const pLog = await window.api.poller.log();
+      const snap = r.ok ? await window.api.cloud.snapshot() : null;
       if (cancelled) return;
       setHb(r); setChromes(c); setWatcher(w); setYelpBiz(detected);
       setYelpLog(yLog); setYelpShot(yShot);
       setTtLog(tLog); setTtShot(tShot);
+      setPollerLog(pLog); setSnapshot(snap);
     };
     tick();
     const t = setInterval(tick, 5_000);
@@ -183,8 +193,109 @@ export default function App(): React.JSX.Element {
         screenshot={ttShot}
       />
 
+      <ReplyQueueCard poller={watcher?.poller} log={pollerLog} />
+      <PipelineCard snapshot={snapshot} />
+
       <div className="muted small mono">paired as {tokenPreview}</div>
     </Shell>
+  );
+}
+
+// Reply queue: what the agent is sending via Chrome (AI-drafted or operator-typed replies).
+function ReplyQueueCard(props: { poller?: PollerStatus; log: PollerLog }): React.JSX.Element {
+  const p = props.poller;
+  const active = p && p.status !== 'idle';
+  return (
+    <div className="card">
+      <div className="row between">
+        <h3>Reply queue</h3>
+        <div className="muted small">
+          {!active && 'Idle — starts when a watcher is running'}
+          {active && (
+            <>
+              <span className="pill">{p!.pendingCount} pending</span>
+              <span className="pill green">{p!.sentCount} sent</span>
+              {p!.failedCount > 0 && <span className="pill red">{p!.failedCount} failed</span>}
+            </>
+          )}
+        </div>
+      </div>
+      <p className="hint">
+        Text replies the cloud queued (AI-drafted or typed by you in the dashboard). The agent sends each one
+        through your real Chrome and reports back.
+      </p>
+      {props.log.length === 0 ? (
+        <div className="muted small">No replies sent yet.</div>
+      ) : (
+        <div className="poll-log">
+          {props.log.map((l, i) => (
+            <div key={i} className={`poll-row ${l.status === 'failed' ? 'err' : ''}`}>
+              <span className="mono">{new Date(l.at).toLocaleTimeString()}</span>
+              <span className={`tag ${l.source}`}>{l.source}</span>
+              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {l.status === 'sent' ? '✓ ' : '✗ '}
+                {l.error ? l.error : l.text}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Pipeline snapshot from the cloud, including the call queue (calls run server-side via the
+// voice agent — this is a read-only view of what's queued / in progress).
+function PipelineCard(props: { snapshot: Snapshot | null }): React.JSX.Element {
+  const s = props.snapshot;
+  const labels: Record<string, string> = {
+    new: 'New', ready: 'Ready to call', calling: 'Calling', contacted: 'Contacted',
+    no_answer: 'No answer', engaged: 'Engaged', booked: 'Booked',
+    not_interested: 'Not interested', do_not_call: 'Do not call',
+  };
+  const order = ['new', 'ready', 'calling', 'contacted', 'no_answer', 'engaged', 'booked', 'not_interested', 'do_not_call'];
+  return (
+    <div className="card">
+      <div className="row between">
+        <h3>Pipeline &amp; calls</h3>
+        <div className="muted small">{s?.ok ? `${s.total} leads` : ''}</div>
+      </div>
+      {!s ? (
+        <div className="muted small">Connect to load…</div>
+      ) : !s.ok ? (
+        <div className="error">{s.error}</div>
+      ) : (
+        <>
+          <div className="stat-grid">
+            {order.filter((k) => s.counts[k]).map((k) => (
+              <div key={k} className="stat">
+                <div className="stat-num">{s.counts[k]}</div>
+                <div className="stat-label">{labels[k] ?? k}</div>
+              </div>
+            ))}
+          </div>
+          <div className="muted small" style={{ marginTop: 12, marginBottom: 4 }}>
+            Call queue — calls placed by the voice agent (server-side)
+          </div>
+          {s.callQueue.length === 0 ? (
+            <div className="muted small">Nothing queued to call.</div>
+          ) : (
+            <div className="poll-log">
+              {s.callQueue.map((l) => (
+                <div key={l.id} className="poll-row">
+                  <span className={`tag ${l.source}`}>{l.source}</span>
+                  <span style={{ flex: 1 }}>{l.name}</span>
+                  <span className={`pill ${l.status === 'calling' ? 'green' : ''}`}>
+                    {l.status === 'calling' ? 'calling…' : 'queued'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="hint">Manage calls, transcripts &amp; outcomes in the ReplyHawk dashboard.</p>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -323,4 +434,14 @@ p { margin: 4px 0 12px; }
 .status-dot.green { background: #22c55e; }
 .status-dot.red { background: #ef4444; }
 .status-dot.gray { background: #6b7280; }
+.pill { display: inline-block; padding: 2px 8px; margin-left: 6px; border-radius: 999px; font-size: 11px; background: #1f2530; color: #cbd5e1; border: 1px solid #2a2f3a; }
+.pill.green { background: #0f2a1a; color: #4ade80; border-color: #14532d; }
+.pill.red { background: #2a1414; color: #f87171; border-color: #7f1d1d; }
+.tag { display: inline-block; min-width: 64px; text-align: center; padding: 1px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; background: #1f2530; color: #94a3b8; }
+.tag.yelp { background: #2a1411; color: #fb7185; }
+.tag.thumbtack { background: #0d1f2a; color: #38bdf8; }
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; margin-top: 10px; }
+.stat { background: #0f1318; border: 1px solid #2a2f3a; border-radius: 6px; padding: 8px 10px; }
+.stat-num { font-size: 20px; font-weight: 700; line-height: 1; }
+.stat-label { font-size: 11px; color: #8a93a3; margin-top: 4px; }
 `;
