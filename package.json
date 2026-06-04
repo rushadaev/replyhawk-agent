@@ -1,6 +1,6 @@
 {
   "name": "replyhawk-agent",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "ReplyHawk Agent — runs on the operator's Mac. Watches Yelp/Thumbtack via real Chrome, sends replies, talks to the ReplyHawk cloud.",
   "main": "./out/main/index.js",
   "author": "ReplyHawk",
