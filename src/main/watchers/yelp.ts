@@ -14,6 +14,7 @@ export interface PollLog { at: number; ingested: number; total: number; note?: s
 
 export class YelpWatcher {
   private timer: NodeJS.Timeout | null = null;
+  private running = false; // guard against overlapping ticks (re-ingest can be slow)
   private snapshot = new Map<string, SnapshotEntry>();
   private bizEncid: string | null = null;
   readonly cdpPort: number;
@@ -107,6 +108,8 @@ export class YelpWatcher {
     this.status = 'connecting';
     const ms = Math.max(15, intervalSec) * 1000;
     const tick = async (): Promise<void> => {
+      if (this.running) return; // previous cycle still re-ingesting; skip this beat
+      this.running = true;
       try {
         const r = await this.pollOnceWithResult();
         this.status = 'watching';
@@ -118,6 +121,8 @@ export class YelpWatcher {
         this.status = 'error';
         this.lastError = (e as Error).message;
         this.log.unshift({ at: Date.now(), ingested: 0, total: 0, note: `ERROR: ${this.lastError}` });
+      } finally {
+        this.running = false;
       }
     };
     await tick();
@@ -168,20 +173,26 @@ export class YelpWatcher {
           console.warn('[yelp] screenshot failed:', (e as Error).message);
         }
 
-        // Ask the cloud which leads it already has. Ingest anything in the inbox that's
-        // missing — plus any known lead whose newest message changed (new customer reply).
-        // This is self-healing: no first-run skip, survives restarts, no stale snapshot.
+        // Ask the cloud which leads it already has, then ingest:
+        //   1. Anything the cloud is missing (a brand-new lead), and
+        //   2. Any thread whose NEWEST message is the customer's — i.e. they spoke last and
+        //      we owe a reply. We re-ingest these regardless of our in-memory snapshot, so a
+        //      reply that arrived while the agent was off (or before the first sighting of the
+        //      thread) is still caught. Re-ingest is idempotent: the cloud dedups messages on
+        //      sourceMessageId, so only a genuinely-new customer message triggers a response.
+        // Bounded so a huge inbox can't make one poll cycle crawl.
+        const RECHECK_CAP = 12;
         const known = await knownLeadIds('yelp').catch(() => new Set<string>());
-        const changed: YelpInboxItem[] = [];
+        const fresh = items.filter((it) => !known.has(it.leadEncid));
+        const customerWaiting = items
+          .filter((it) => known.has(it.leadEncid) && it.latestIsCustomer)
+          .slice(0, RECHECK_CAP);
+        const changed = [...fresh, ...customerWaiting];
         for (const it of items) {
-          const prev = this.snapshot.get(it.leadEncid);
-          const isNewToCloud = !known.has(it.leadEncid);
-          const hasNewMessage = !!prev && prev.lastEventTime !== it.lastEventTime && it.latestIsCustomer;
-          if (isNewToCloud || hasNewMessage) changed.push(it);
           this.snapshot.set(it.leadEncid, { encid: it.leadEncid, lastEventTime: it.lastEventTime });
         }
 
-        report(changed.length, items.length);
+        report(fresh.length, items.length);
         for (const it of changed) {
           await this.ingestLead(page, it);
         }
