@@ -7,8 +7,14 @@ import { postLead, postEvent, postMessages, knownLeadIds } from '../cloudClient'
 
 export interface ThumbtackLog { at: number; ingested: number; total: number; note?: string }
 
+// How many of the most-recently-active existing threads to re-check each poll for new
+// customer replies. Thumbtack lists the inbox newest-first, so a reply bumps its thread
+// into this window. Bounded so a big inbox doesn't make every poll cycle crawl.
+const RECHECK_TOP_N = 6;
+
 export class ThumbtackWatcher {
   private timer: NodeJS.Timeout | null = null;
+  private running = false; // guard against overlapping ticks (re-ingest can be slow)
   private seen = new Set<string>();
   readonly cdpPort: number;
   status: 'idle' | 'connecting' | 'watching' | 'error' = 'idle';
@@ -71,6 +77,8 @@ export class ThumbtackWatcher {
     this.status = 'connecting';
     const ms = Math.max(15, intervalSec) * 1000;
     const tick = async (): Promise<void> => {
+      if (this.running) return; // previous cycle still re-ingesting; skip this beat
+      this.running = true;
       try {
         const r = await this.pollOnceWithResult();
         this.status = 'watching';
@@ -82,6 +90,8 @@ export class ThumbtackWatcher {
         this.status = 'error';
         this.lastError = (e as Error).message;
         this.log.unshift({ at: Date.now(), ingested: 0, total: 0, note: `ERROR: ${this.lastError}` });
+      } finally {
+        this.running = false;
       }
     };
     await tick();
@@ -131,13 +141,24 @@ export class ThumbtackWatcher {
           console.warn('[thumbtack] screenshot failed:', (e as Error).message);
         }
 
-        // Reconcile against the cloud: ingest any thread the cloud doesn't have yet.
-        // Self-healing — no first-run skip, survives restarts.
+        // Reconcile against the cloud:
+        //  1. Ingest any thread the cloud doesn't have yet (new leads). Self-healing —
+        //     no first-run skip, survives restarts.
+        //  2. Re-ingest the most-recently-active EXISTING threads so a customer's reply on
+        //     a thread we already know gets picked up (drives the back-and-forth). The cloud
+        //     dedups messages on sourceMessageId, so this is idempotent — only a genuinely
+        //     new customer message inserts, which is what triggers the auto-response.
         const known = await knownLeadIds('thumbtack').catch(() => new Set<string>());
         const missing = ids.filter((id) => !known.has(id));
+        const recheck = ids.filter((id) => known.has(id)).slice(0, RECHECK_TOP_N);
         for (const id of missing) {
           try { await this.ingestOne(page, id); ingested++; }
           catch (e) { console.error('thumbtack ingest failed', id, (e as Error).message); }
+        }
+        for (const id of recheck) {
+          // Re-check for new replies; not counted as "ingested" (these are known threads).
+          try { await this.ingestOne(page, id); }
+          catch (e) { console.error('thumbtack recheck failed', id, (e as Error).message); }
         }
       } finally {
         await page.close().catch(() => undefined);
