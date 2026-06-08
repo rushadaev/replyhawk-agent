@@ -4,6 +4,7 @@
 import { chromium, BrowserContext, Page } from 'playwright-core';
 import { extractThumbtackLead, ThumbtackLead } from '../extractors/thumbtack';
 import { postLead, postEvent, postMessages, knownLeadIds } from '../cloudClient';
+import { dumpPayload } from '../debugPhotos';
 
 export interface ThumbtackLog { at: number; ingested: number; total: number; note?: string }
 
@@ -202,6 +203,7 @@ export class ThumbtackWatcher {
     });
     page.off('response', listener);
     if (!captured.stream) return;
+    dumpPayload('thumbtack', bidPk, { stream: captured.stream, panel }); // no-op unless RH_DEBUG_PHOTOS=1
     const lead: ThumbtackLead = extractThumbtackLead({ stream: captured.stream as Parameters<typeof extractThumbtackLead>[0]['stream'], panel, bidPk, url });
 
     const posted = await postLead({

@@ -7,6 +7,7 @@
 import { chromium, BrowserContext, Page } from 'playwright-core';
 import { extractInbox, extractMessages, extractLeadDetails, type YelpInboxItem } from '../extractors/yelp';
 import { postLead, postEvent, postMessages, knownLeadIds } from '../cloudClient';
+import { dumpPayload } from '../debugPhotos';
 
 interface SnapshotEntry { encid: string; lastEventTime: string | null }
 
@@ -207,6 +208,7 @@ export class YelpWatcher {
     const state = await page.evaluate(() => (window as unknown as { yelp?: { react_apollo_state?: Record<string, unknown> } }).yelp?.react_apollo_state || null);
     if (!state) return;
     const s = state as Record<string, Record<string, unknown>>;
+    dumpPayload('yelp', it.leadEncid, s); // no-op unless RH_DEBUG_PHOTOS=1 — locate photo fields
     const details = extractLeadDetails(s);
     const messages = extractMessages(s);
     const lastCustomer = [...messages].reverse().find((m) => m.sender === 'customer');
