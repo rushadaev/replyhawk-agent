@@ -213,6 +213,17 @@ export class YelpWatcher {
     const messages = extractMessages(s);
     const lastCustomer = [...messages].reverse().find((m) => m.sender === 'customer');
 
+    // Customer-attached job photos: Yelp serves them as signed S3 uploads in the DOM
+    // (not the Apollo state). They're signed (valid ~24h) so the cloud can fetch them
+    // directly for AI vision analysis.
+    const photoUrls: string[] = await page.evaluate(() => {
+      const urls = new Set<string>();
+      const isUpload = (u: string): boolean => /yelp-uploader-resources\.s3|\/buphoto\//.test(u);
+      document.querySelectorAll('img').forEach((i) => { if (i.src && isUpload(i.src)) urls.add(i.src); });
+      document.querySelectorAll('a[href]').forEach((a) => { const h = (a as HTMLAnchorElement).href; if (h && isUpload(h)) urls.add(h); });
+      return [...urls];
+    }).catch(() => [] as string[]);
+
     const lead = await postLead({
       source: 'yelp',
       sourceLeadId: it.leadEncid,
@@ -223,7 +234,8 @@ export class YelpWatcher {
       service: details.service ?? it.projectCategory ?? undefined,
       location: details.location,
       notes: details.notes || it.previewText,
-      sourcePayload: { inboxItem: it, urgency: details.urgency, communicationPreference: details.communicationPreference },
+      photoUrls: photoUrls.length ? photoUrls : undefined,
+      sourcePayload: { inboxItem: it, urgency: details.urgency, communicationPreference: details.communicationPreference, photoUrls },
     });
     // Push the full conversation as structured messages (cloud dedups on sourceMessageId).
     if (messages.length) {
