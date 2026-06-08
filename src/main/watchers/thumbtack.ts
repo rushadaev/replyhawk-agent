@@ -4,7 +4,7 @@
 import { chromium, BrowserContext, Page } from 'playwright-core';
 import { extractThumbtackLead, ThumbtackLead } from '../extractors/thumbtack';
 import { postLead, postEvent, postMessages, knownLeadIds } from '../cloudClient';
-import { dumpPayload } from '../debugPhotos';
+import { dumpPayload, scanForImages } from '../debugPhotos';
 
 export interface ThumbtackLog { at: number; ingested: number; total: number; note?: string }
 
@@ -206,6 +206,19 @@ export class ThumbtackWatcher {
     dumpPayload('thumbtack', bidPk, { stream: captured.stream, panel }); // no-op unless RH_DEBUG_PHOTOS=1
     const lead: ThumbtackLead = extractThumbtackLead({ stream: captured.stream as Parameters<typeof extractThumbtackLead>[0]['stream'], panel, bidPk, url });
 
+    // Customer-attached photos: scan the messenger payload + the conversation DOM, drop UI
+    // noise (logos/avatars/icons). The cloud runs vision on whatever we send; a stray
+    // avatar just gets described as "not job-related", so over-capture is harmless.
+    const streamImgs = scanForImages(captured.stream);
+    const domImgs: string[] = await page.evaluate(() => {
+      const out = new Set<string>();
+      document.querySelectorAll('img').forEach((i) => { if (i.src && !i.src.startsWith('data:')) out.add(i.src); });
+      document.querySelectorAll('a[href]').forEach((a) => { const h = (a as HTMLAnchorElement).href; if (h && /\.(jpe?g|png|webp)(\?|$)/i.test(h)) out.add(h); });
+      return [...out];
+    }).catch(() => [] as string[]);
+    const NOISE = /(logo|icon|sprite|emoji|avatar|profile|\.svg|placeholder|static|favicon|badge|googleusercontent)/i;
+    const photoUrls = [...new Set([...streamImgs, ...domImgs])].filter((u) => /^https?:\/\//.test(u) && !NOISE.test(u)).slice(0, 12);
+
     const posted = await postLead({
       source: 'thumbtack',
       sourceLeadId: lead.sourceLeadId,
@@ -215,7 +228,8 @@ export class ThumbtackWatcher {
       service: lead.service,
       location: lead.location,
       notes: lead.notes,
-      sourcePayload: { panelFields: lead.panelFields, messageCount: lead.messages.length },
+      photoUrls: photoUrls.length ? photoUrls : undefined,
+      sourcePayload: { panelFields: lead.panelFields, messageCount: lead.messages.length, photoUrls },
     });
     if (lead.messages.length) {
       await postMessages(posted.id, lead.messages.map((m) => ({

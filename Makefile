@@ -41,9 +41,11 @@ dmg: check-apple ## Build a signed + notarized .dmg locally (no publish)
 	@echo "→ dist/ReplyHawk-Agent-$$(node -p "require('./package.json').version").dmg"
 
 # --- Release: bump → build+notarize+publish → push → mark the draft as latest ----------
-release: bump-patch _build-publish ## Patch release (0.1.3 → 0.1.4) end-to-end
-release-minor: bump-minor _build-publish ## Minor release (0.1.x → 0.2.0)
-release-major: bump-major _build-publish ## Major release (0.x → 1.0.0)
+# Creds are checked FIRST so a missing key can't leave a dangling version bump + tag.
+release: check-apple check-gh bump-patch _build-publish ## Patch release (0.1.3 → 0.1.4) end-to-end
+release-minor: check-apple check-gh bump-minor _build-publish ## Minor release (0.1.x → 0.2.0)
+release-major: check-apple check-gh bump-major _build-publish ## Major release (0.x → 1.0.0)
+publish: _build-publish ## Build + publish the CURRENT version (no bump)
 
 bump-patch:
 	npm version patch
