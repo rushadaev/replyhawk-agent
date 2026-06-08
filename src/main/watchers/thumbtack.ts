@@ -4,7 +4,7 @@
 import { chromium, BrowserContext, Page } from 'playwright-core';
 import { extractThumbtackLead, ThumbtackLead } from '../extractors/thumbtack';
 import { postLead, postEvent, postMessages, knownLeadIds } from '../cloudClient';
-import { dumpPayload, scanForImages } from '../debugPhotos';
+import { dumpPayload } from '../debugPhotos';
 
 export interface ThumbtackLog { at: number; ingested: number; total: number; note?: string }
 
@@ -170,10 +170,15 @@ export class ThumbtackWatcher {
 
   private async ingestOne(page: Page, bidPk: string): Promise<void> {
     const url = `https://www.thumbtack.com/pro-inbox/messages/${bidPk}`;
-    const captured: { stream: { messages?: unknown[] } | null } = { stream: null };
+    const captured: { stream: { messages?: unknown[] } | null; photos: Set<string> } = { stream: null, photos: new Set() };
     const listener = async (resp: import('playwright-core').Response): Promise<void> => {
-      if (resp.url().includes('about:blank')) return;
-      if (!/app\.thumbtack\.com\/graphql/.test(resp.url())) return;
+      const u = resp.url();
+      if (u.includes('about:blank')) return;
+      // Customer-attached photos load as image responses from /attachment/preview/ — they're
+      // NOT <img> tags at scrape time and not in the messenger JSON, so we grab them here.
+      // The preview URLs are publicly fetchable, so the cloud can run vision on them directly.
+      if (/thumbtack\.com\/attachment\//.test(u)) { captured.photos.add(u); return; }
+      if (!/app\.thumbtack\.com\/graphql/.test(u)) return;
       try {
         const req = JSON.parse(resp.request().postData() || '{}') as { operationName?: string };
         if (req.operationName === 'MessengerStreamQuery') {
@@ -206,18 +211,8 @@ export class ThumbtackWatcher {
     dumpPayload('thumbtack', bidPk, { stream: captured.stream, panel }); // no-op unless RH_DEBUG_PHOTOS=1
     const lead: ThumbtackLead = extractThumbtackLead({ stream: captured.stream as Parameters<typeof extractThumbtackLead>[0]['stream'], panel, bidPk, url });
 
-    // Customer-attached photos: scan the messenger payload + the conversation DOM, drop UI
-    // noise (logos/avatars/icons). The cloud runs vision on whatever we send; a stray
-    // avatar just gets described as "not job-related", so over-capture is harmless.
-    const streamImgs = scanForImages(captured.stream);
-    const domImgs: string[] = await page.evaluate(() => {
-      const out = new Set<string>();
-      document.querySelectorAll('img').forEach((i) => { if (i.src && !i.src.startsWith('data:')) out.add(i.src); });
-      document.querySelectorAll('a[href]').forEach((a) => { const h = (a as HTMLAnchorElement).href; if (h && /\.(jpe?g|png|webp)(\?|$)/i.test(h)) out.add(h); });
-      return [...out];
-    }).catch(() => [] as string[]);
-    const NOISE = /(logo|icon|sprite|emoji|avatar|profile|\.svg|placeholder|static|favicon|badge|googleusercontent)/i;
-    const photoUrls = [...new Set([...streamImgs, ...domImgs])].filter((u) => /^https?:\/\//.test(u) && !NOISE.test(u)).slice(0, 12);
+    // Customer-attached job photos captured from /attachment/ image responses above.
+    const photoUrls = [...captured.photos].slice(0, 12);
 
     const posted = await postLead({
       source: 'thumbtack',
