@@ -9,12 +9,13 @@
 // downstream can respond on FB either.
 
 import { chromium, BrowserContext, Page } from 'playwright-core';
-import { postLead, knownLeadIds } from '../cloudClient';
+import { postLead, knownLeadIds, cloudFetch } from '../cloudClient';
 import type { PollLog } from './yelp';
 
 export interface FacebookConfig {
   groupUrls: string[]; // full group URLs the operator is a member of
-  keywords: string[];  // case-insensitive match against post text
+  keywords: string[];  // case-insensitive match against post text — EMPTY = auto-generate
+                       // on the cloud (same Haiku list the Craigslist watcher uses)
 }
 
 interface FeedPost { id: string; url: string; text: string; author: string; group: string }
@@ -49,7 +50,6 @@ export class FacebookWatcher {
   async start(config: FacebookConfig, intervalSec = 300): Promise<void> {
     const groups = config.groupUrls.map((u) => u.trim()).filter(Boolean);
     if (!groups.length) throw new Error('Add at least one Facebook group URL.');
-    if (!config.keywords.length) throw new Error('Add at least one keyword to match posts against.');
     this.config = { groupUrls: groups, keywords: config.keywords };
     if (this.timer) return;
     this.status = 'connecting';
@@ -93,10 +93,24 @@ export class FacebookWatcher {
     }
   }
 
+  // Same auto-keyword source as the Craigslist watcher (cloud-generated, 1h cache).
+  private autoKw: { list: string[]; at: number } | null = null;
+  private async resolveKeywords(cfg: FacebookConfig): Promise<string[]> {
+    if (cfg.keywords.length) return cfg.keywords;
+    if (this.autoKw && Date.now() - this.autoKw.at < 60 * 60 * 1000) return this.autoKw.list;
+    const r = await cloudFetch('/api/agent/keywords');
+    if (!r.ok) throw new Error(`keyword fetch failed (${r.status})`);
+    const { keywords } = (await r.json()) as { keywords: string[] };
+    if (!keywords?.length) throw new Error('No keywords generated — fill in Services in dashboard Settings, or type keywords manually.');
+    this.autoKw = { list: keywords, at: Date.now() };
+    this.log.unshift({ at: Date.now(), ingested: 0, total: 0, note: `auto keywords: ${keywords.join(', ')}` });
+    return keywords;
+  }
+
   private async pollOnce(): Promise<{ ingested: number; total: number }> {
     const cfg = this.config;
     if (!cfg) throw new Error('Not configured');
-    const kws = cfg.keywords.map((k) => k.toLowerCase());
+    const kws = (await this.resolveKeywords(cfg)).map((k) => k.toLowerCase());
     const matched = new Map<string, FeedPost>();
     let totalSeen = 0;
     let ingested = 0;

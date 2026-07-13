@@ -9,12 +9,13 @@
 // pipeline.
 
 import { chromium, BrowserContext, Page } from 'playwright-core';
-import { postLead, knownLeadIds } from '../cloudClient';
+import { postLead, knownLeadIds, cloudFetch } from '../cloudClient';
 import type { PollLog } from './yelp';
 
 export interface CraigslistConfig {
   city: string;        // subdomain, e.g. "losangeles"
-  keywords: string[];  // search terms, one search per keyword
+  keywords: string[];  // search terms, one search per keyword — EMPTY = auto-generate on the
+                       // cloud (Haiku, from the business's services + qualified-lead history)
   category: string;    // CL search category — 'ggg' = all gigs (default)
 }
 
@@ -49,7 +50,6 @@ export class CraigslistWatcher {
 
   async start(config: CraigslistConfig, intervalSec = 300): Promise<void> {
     if (!config.city.trim()) throw new Error('Set your Craigslist city (the subdomain, e.g. "losangeles").');
-    if (!config.keywords.length) throw new Error('Add at least one search keyword.');
     this.config = { ...config, category: config.category || 'ggg' };
     if (this.timer) return;
     this.status = 'connecting';
@@ -92,16 +92,33 @@ export class CraigslistWatcher {
     }
   }
 
+  // Auto keywords (city-only setup): fetched from the cloud, which generates them with Haiku
+  // from the business's services and refines them from qualified-lead history. Cached 1h so
+  // the learned-terms loop keeps feeding in without a request per poll.
+  private autoKw: { list: string[]; at: number } | null = null;
+  private async resolveKeywords(cfg: CraigslistConfig): Promise<string[]> {
+    if (cfg.keywords.length) return cfg.keywords;
+    if (this.autoKw && Date.now() - this.autoKw.at < 60 * 60 * 1000) return this.autoKw.list;
+    const r = await cloudFetch('/api/agent/keywords');
+    if (!r.ok) throw new Error(`keyword fetch failed (${r.status})`);
+    const { keywords } = (await r.json()) as { keywords: string[] };
+    if (!keywords?.length) throw new Error('No keywords generated — fill in Services in dashboard Settings, or type keywords manually.');
+    this.autoKw = { list: keywords, at: Date.now() };
+    this.log.unshift({ at: Date.now(), ingested: 0, total: 0, note: `auto keywords: ${keywords.join(', ')}` });
+    return keywords;
+  }
+
   private async pollOnce(): Promise<{ ingested: number; total: number }> {
     const cfg = this.config;
     if (!cfg) throw new Error('Not configured');
+    const keywords = await this.resolveKeywords(cfg);
     let ingested = 0;
     const hits = new Map<string, SearchHit>();
 
     await this.withContext(async (ctx) => {
       const page = await ctx.newPage();
       try {
-        for (const kw of cfg.keywords) {
+        for (const kw of keywords) {
           const url = `https://${cfg.city}.craigslist.org/search/${cfg.category}?query=${encodeURIComponent(kw)}&sort=date`;
           await page.goto(url, { waitUntil: 'domcontentloaded' });
           await page.waitForTimeout(1500); // CL renders results client-side

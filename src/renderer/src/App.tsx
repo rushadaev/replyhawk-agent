@@ -235,12 +235,12 @@ export default function App(): React.JSX.Element {
         hidden={!!clChrome?.hidden}
         watcherStatus={watcher?.craigslist}
         busy={busy === 'craigslist'}
-        loginHint="No login needed — searches your local gigs section for posts matching your keywords and pulls out phone numbers / relay emails. Checks every 5 minutes."
+        loginHint="No login needed — just set your city. Keywords are AI-generated from your services (Settings → Business) and improve as qualified leads come in; the poll log shows which ones are in use. Checks every 5 minutes."
         extra={
           <div className="cfg">
             <input className="input small" placeholder="City subdomain — e.g. losangeles (from losangeles.craigslist.org)"
                    value={clCity} onChange={(e) => setClCity(e.target.value)} />
-            <input className="input small" placeholder="Keywords, comma-separated — e.g. drywall, remodel, handyman, painting"
+            <input className="input small" placeholder="Keywords (optional) — leave blank to auto-generate from your services + lead history"
                    value={clKeywords} onChange={(e) => setClKeywords(e.target.value)} />
           </div>
         }
@@ -272,7 +272,7 @@ export default function App(): React.JSX.Element {
           <div className="cfg">
             <textarea className="input small" rows={2} placeholder={'Group URLs, one per line — e.g. https://www.facebook.com/groups/pasadenaneighbors'}
                       value={fbGroups} onChange={(e) => setFbGroups(e.target.value)} />
-            <input className="input small" placeholder="Keywords, comma-separated — e.g. recommend, contractor, remodel, quote"
+            <input className="input small" placeholder="Keywords (optional) — leave blank to auto-generate from your services + lead history"
                    value={fbKeywords} onChange={(e) => setFbKeywords(e.target.value)} />
           </div>
         }
