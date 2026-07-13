@@ -126,15 +126,17 @@ export class CraigslistWatcher {
     return { ingested, total: hits.size };
   }
 
-  // Post URLs look like /{area}/{cat}/d/{slug}/{id}.html — regex on hrefs is far more stable
-  // than CL's result-list class names (which differ between the JS app and the static fallback).
+  // Regex on post-URL hrefs is far more stable than CL's result-list class names. Two URL
+  // generations in the wild (verified live 2026-06): the current app uses
+  // www.craigslist.org/view/d/{slug}/{base62id}; older pages used
+  // {city}.craigslist.org/{area}/{cat}/d/{slug}/{numericid}.html.
   private async extractSearchHits(page: Page): Promise<SearchHit[]> {
     return page.evaluate(() => {
       const out: { id: string; url: string; title: string }[] = [];
       const seen = new Set<string>();
       document.querySelectorAll('a[href]').forEach((a) => {
         const href = (a as HTMLAnchorElement).href;
-        const m = href.match(/craigslist\.org\/.*\/d\/[^/]+\/(\d+)\.html/);
+        const m = href.match(/craigslist\.org\/(?:view\/d|.*\/d)\/[^/]+\/([A-Za-z0-9]{8,})(?:\.html)?(?:[?#]|$)/);
         if (!m || seen.has(m[1])) return;
         const title = (a.textContent || '').trim();
         if (!title || title.length < 4) return; // skip icon/thumbnail anchors
@@ -163,18 +165,26 @@ export class CraigslistWatcher {
     const phoneMatch = details.body.match(/(\+?1[\s.\-]?)?\(?\d{3}\)?[\s.\-]?\d{3}[\s.\-]?\d{4}/);
     const phone = phoneMatch ? phoneMatch[0].replace(/[^\d+]/g, '') : undefined;
 
-    // Relay email: open the reply panel and grab the mailto (best-effort, short timeout).
+    // Relay email: open the reply panel, then its "email" option, and grab the mailto
+    // (verified live: relay is xxxx@gigs.craigslist.org — the subdomain varies by section,
+    // so accept any *.craigslist.org relay). Best-effort with short timeouts.
     let relayEmail: string | undefined;
     try {
       const replyBtn = page.locator('button.reply-button, .reply-button, button:has-text("reply")').first();
       if (await replyBtn.count()) {
         await replyBtn.click({ timeout: 3000 });
+        await page.waitForTimeout(1200);
+        const emailOpt = page.locator('button:has-text("email"), a:has-text("email")').first();
+        if (await emailOpt.count()) await emailOpt.click({ timeout: 3000 }).catch(() => undefined);
         await page.waitForTimeout(1500);
         const mailto = await page.evaluate(() => {
           const a = document.querySelector('a[href^="mailto:"]') as HTMLAnchorElement | null;
-          return a ? a.href.replace(/^mailto:/, '').split('?')[0] : null;
+          if (a) return decodeURIComponent(a.href.replace(/^mailto:/, '').split('?')[0]);
+          // Fallback: the address is also printed in the panel (may wrap across lines).
+          const m = document.body.innerText.replace(/\s+/g, '').match(/[\w.+-]+@[\w-]+\.craigslist\.org/i);
+          return m ? m[0] : null;
         });
-        if (mailto && /@reply\.craigslist\.org$/i.test(mailto)) relayEmail = mailto;
+        if (mailto && /\.craigslist\.org$/i.test(mailto)) relayEmail = mailto;
       }
     } catch { /* reply panel blocked or changed — phone/notes still make a usable lead */ }
 
