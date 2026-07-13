@@ -26,7 +26,7 @@ function findChrome(): string | null {
   return list.find((p) => existsSync(p)) ?? null;
 }
 
-export interface PlatformId { id: 'yelp' | 'thumbtack' }
+export interface PlatformId { id: 'yelp' | 'thumbtack' | 'craigslist' | 'facebook' }
 
 export interface RunningChrome {
   platform: PlatformId['id'];
@@ -58,9 +58,10 @@ async function waitForProcExit(proc: ChildProcess, timeoutMs = 8_000): Promise<v
   });
 }
 
-// Pick a free port per platform so two Chromes can run side-by-side.
+// Pick a free port per platform so multiple Chromes can run side-by-side.
+const PORTS: Record<PlatformId['id'], number> = { yelp: 19222, thumbtack: 19223, craigslist: 19224, facebook: 19225 };
 function portFor(p: PlatformId['id']): number {
-  return p === 'yelp' ? 19222 : 19223;
+  return PORTS[p];
 }
 
 function profileDirFor(p: PlatformId['id']): string {
@@ -153,14 +154,20 @@ export function isHidden(platform: PlatformId['id']): boolean {
 }
 
 export function listChromes(): Array<{ platform: PlatformId['id']; port: number; running: boolean; hidden: boolean }> {
-  return (['yelp', 'thumbtack'] as const).map((p) => {
+  return (['yelp', 'thumbtack', 'craigslist', 'facebook'] as const).map((p) => {
     const r = running.get(p);
     return { platform: p, port: portFor(p), running: !!r && !r.proc.killed, hidden: !!r?.hidden };
   });
 }
 
+const START_URLS: Record<PlatformId['id'], string> = {
+  yelp: 'https://biz.yelp.com/login',
+  thumbtack: 'https://www.thumbtack.com/login',
+  craigslist: 'https://www.craigslist.org', // geo-redirects to the local site; no login needed
+  facebook: 'https://www.facebook.com',
+};
 export function startUrlFor(platform: PlatformId['id']): string {
-  return platform === 'yelp' ? 'https://biz.yelp.com/login' : 'https://www.thumbtack.com/login';
+  return START_URLS[platform];
 }
 
 // Opens an external link the user clicks — used for "Help" buttons in the UI.

@@ -7,9 +7,12 @@ import { heartbeat } from './heartbeat';
 import { startChromeFor, stopChromeFor, listChromes, makeHidden, showWindow, startUrlFor, type PlatformId } from './chrome';
 import { YelpWatcher } from './watchers/yelp';
 import { ThumbtackWatcher } from './watchers/thumbtack';
+import { CraigslistWatcher, type CraigslistConfig } from './watchers/craigslist';
+import { FacebookWatcher, type FacebookConfig } from './watchers/facebook';
 import { CommandPoller } from './commandPoller';
 import { cloudFetch } from './cloudClient';
 import { initAutoUpdate } from './updater';
+import { readFileSync, writeFileSync } from 'node:fs';
 
 // Brand the app name early so the macOS menu + dock say "ReplyHawk Agent" (not "Electron")
 // even in dev. (Packaged builds get this from productName; dev needs it set explicitly.)
@@ -20,8 +23,19 @@ let mainWindow: BrowserWindow | null = null;
 // One watcher instance per source, lazily started after the user logs in.
 const yelp = new YelpWatcher(19222);
 const thumbtack = new ThumbtackWatcher(19223);
+const craigslist = new CraigslistWatcher(19224);
+const facebook = new FacebookWatcher(19225);
 // Polls the cloud for outbound reply commands and sends them via Chrome.
 const poller = new CommandPoller({ yelp: 19222, thumbtack: 19223 });
+
+// Watcher configs (Craigslist city/keywords, FB groups/keywords) persist across restarts.
+function configPath(): string { return join(app.getPath('userData'), 'watcher-config.json'); }
+function loadWatcherConfig(): { craigslist?: CraigslistConfig; facebook?: FacebookConfig } {
+  try { return JSON.parse(readFileSync(configPath(), 'utf8')); } catch { return {}; }
+}
+function saveWatcherConfig(patch: { craigslist?: CraigslistConfig; facebook?: FacebookConfig }): void {
+  try { writeFileSync(configPath(), JSON.stringify({ ...loadWatcherConfig(), ...patch }, null, 2)); } catch { /* noop */ }
+}
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -83,8 +97,7 @@ app.whenReady().then(() => {
 
   // Chrome connections (one persistent Chrome per source)
   ipcMain.handle('chrome:start', async (_e, p: PlatformId['id']) => {
-    const url = p === 'yelp' ? 'https://biz.yelp.com/login' : 'https://www.thumbtack.com/login';
-    const r = startChromeFor(p, url);
+    const r = startChromeFor(p, startUrlFor(p));
     if ('error' in r) return { ok: false, error: r.error };
     return { ok: true, port: r.port };
   });
@@ -124,9 +137,45 @@ app.whenReady().then(() => {
   ipcMain.handle('watcher:thumbtack:poll-now', async () => thumbtack.pollNow());
   ipcMain.handle('watcher:thumbtack:log', async () => thumbtack.recent(10));
   ipcMain.handle('watcher:thumbtack:screenshot', async () => thumbtack.lastScreenshot ?? null);
+
+  // Craigslist — public listings, no login; config = city + keywords.
+  ipcMain.handle('watcher:craigslist:get-config', async () => craigslist.getConfig() ?? loadWatcherConfig().craigslist ?? null);
+  ipcMain.handle('watcher:craigslist:start', async (_e, cfg: CraigslistConfig) => {
+    try {
+      await craigslist.start(cfg, 300);
+      saveWatcherConfig({ craigslist: cfg });
+      const h = await makeHidden('craigslist', startUrlFor('craigslist'));
+      if (!h.ok) console.warn('[craigslist] makeHidden failed:', h.error);
+      return { ok: true, hidden: h.ok };
+    } catch (e) { return { ok: false, error: (e as Error).message }; }
+  });
+  ipcMain.handle('watcher:craigslist:stop', async () => craigslist.stop());
+  ipcMain.handle('watcher:craigslist:poll-now', async () => craigslist.pollNow());
+  ipcMain.handle('watcher:craigslist:log', async () => craigslist.recent(10));
+  ipcMain.handle('watcher:craigslist:screenshot', async () => craigslist.lastScreenshot ?? null);
+
+  // Facebook Groups — notify-only; config = group URLs + keywords. Requires the operator's
+  // own FB login in the dedicated Chrome profile.
+  ipcMain.handle('watcher:facebook:get-config', async () => facebook.getConfig() ?? loadWatcherConfig().facebook ?? null);
+  ipcMain.handle('watcher:facebook:start', async (_e, cfg: FacebookConfig) => {
+    try {
+      await facebook.start(cfg, 300);
+      saveWatcherConfig({ facebook: cfg });
+      const h = await makeHidden('facebook', startUrlFor('facebook'));
+      if (!h.ok) console.warn('[facebook] makeHidden failed:', h.error);
+      return { ok: true, hidden: h.ok };
+    } catch (e) { return { ok: false, error: (e as Error).message }; }
+  });
+  ipcMain.handle('watcher:facebook:stop', async () => facebook.stop());
+  ipcMain.handle('watcher:facebook:poll-now', async () => facebook.pollNow());
+  ipcMain.handle('watcher:facebook:log', async () => facebook.recent(10));
+  ipcMain.handle('watcher:facebook:screenshot', async () => facebook.lastScreenshot ?? null);
+
   ipcMain.handle('watcher:status', async () => ({
     yelp: { status: yelp.status, lastTick: yelp.lastTick, lastError: yelp.lastError },
     thumbtack: { status: thumbtack.status, lastTick: thumbtack.lastTick, lastError: thumbtack.lastError },
+    craigslist: { status: craigslist.status, lastTick: craigslist.lastTick, lastError: craigslist.lastError },
+    facebook: { status: facebook.status, lastTick: facebook.lastTick, lastError: facebook.lastError },
     poller: {
       status: poller.status, lastTick: poller.lastTick, lastError: poller.lastError,
       sentCount: poller.sentCount, failedCount: poller.failedCount, pendingCount: poller.pendingCount,
@@ -171,8 +220,12 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   yelp.stop();
   thumbtack.stop();
+  craigslist.stop();
+  facebook.stop();
   poller.stop();
   void stopChromeFor('yelp');
   void stopChromeFor('thumbtack');
+  void stopChromeFor('craigslist');
+  void stopChromeFor('facebook');
   if (process.platform !== 'darwin') app.quit();
 });

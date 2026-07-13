@@ -10,7 +10,7 @@ type PollerLog = Array<{ at: number; leadId: string; source: string; status: 'se
 type Snapshot =
   | { ok: true; counts: Record<string, number>; total: number; callQueue: Array<{ id: string; name: string; source: string; status: string }> }
   | { ok: false; error: string };
-type Source = 'yelp' | 'thumbtack';
+type Source = 'yelp' | 'thumbtack' | 'craigslist' | 'facebook';
 
 export default function App(): React.JSX.Element {
   const [hasToken, setHasToken] = useState<boolean | null>(null);
@@ -21,7 +21,7 @@ export default function App(): React.JSX.Element {
   const [verifyError, setVerifyError] = useState<string | null>(null);
 
   const [chromes, setChromes] = useState<Array<{ platform: Source; running: boolean; hidden: boolean }>>([]);
-  const [watcher, setWatcher] = useState<{ yelp: Status; thumbtack: Status; poller?: PollerStatus } | null>(null);
+  const [watcher, setWatcher] = useState<{ yelp: Status; thumbtack: Status; craigslist?: Status; facebook?: Status; poller?: PollerStatus } | null>(null);
   const [pollerLog, setPollerLog] = useState<PollerLog>([]);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [yelpLog, setYelpLog] = useState<Array<{ at: number; ingested: number; total: number; note?: string }>>([]);
@@ -30,14 +30,29 @@ export default function App(): React.JSX.Element {
   const [ttLog, setTtLog] = useState<Array<{ at: number; ingested: number; total: number; note?: string }>>([]);
   const [ttShot, setTtShot] = useState<{ at: number; b64: string } | null>(null);
   const [showTtShot, setShowTtShot] = useState(false);
+  const [clLog, setClLog] = useState<Array<{ at: number; ingested: number; total: number; note?: string }>>([]);
+  const [clShot, setClShot] = useState<{ at: number; b64: string } | null>(null);
+  const [showClShot, setShowClShot] = useState(false);
+  const [fbLog, setFbLog] = useState<Array<{ at: number; ingested: number; total: number; note?: string }>>([]);
+  const [fbShot, setFbShot] = useState<{ at: number; b64: string } | null>(null);
+  const [showFbShot, setShowFbShot] = useState(false);
   const [yelpBiz, setYelpBiz] = useState<string | null>(null);
   const [busy, setBusy] = useState<Source | null>(null);
+  // Craigslist / Facebook watcher configs (loaded once from the saved config, edited inline).
+  const [clCity, setClCity] = useState('');
+  const [clKeywords, setClKeywords] = useState('');
+  const [fbGroups, setFbGroups] = useState('');
+  const [fbKeywords, setFbKeywords] = useState('');
 
   useEffect(() => {
     void (async () => {
       const r = await window.api.auth.getToken();
       setHasToken(r.hasToken);
       setTokenPreview(r.preview);
+      const cl = await window.api.watcher.craigslistGetConfig();
+      if (cl) { setClCity(cl.city); setClKeywords(cl.keywords.join(', ')); }
+      const fb = await window.api.watcher.facebookGetConfig();
+      if (fb) { setFbGroups(fb.groupUrls.join('\n')); setFbKeywords(fb.keywords.join(', ')); }
     })();
   }, []);
 
@@ -54,18 +69,24 @@ export default function App(): React.JSX.Element {
       const yShot = (showYelpShot && w.yelp.status !== 'idle') ? await window.api.watcher.yelpScreenshot() : null;
       const tLog = w.thumbtack.status !== 'idle' ? await window.api.watcher.thumbtackLog() : [];
       const tShot = (showTtShot && w.thumbtack.status !== 'idle') ? await window.api.watcher.thumbtackScreenshot() : null;
+      const cLog = w.craigslist && w.craigslist.status !== 'idle' ? await window.api.watcher.craigslistLog() : [];
+      const cShot = (showClShot && w.craigslist?.status !== 'idle') ? await window.api.watcher.craigslistScreenshot() : null;
+      const fLog = w.facebook && w.facebook.status !== 'idle' ? await window.api.watcher.facebookLog() : [];
+      const fShot = (showFbShot && w.facebook?.status !== 'idle') ? await window.api.watcher.facebookScreenshot() : null;
       const pLog = await window.api.poller.log();
       const snap = r.ok ? await window.api.cloud.snapshot() : null;
       if (cancelled) return;
       setHb(r); setChromes(c); setWatcher(w); setYelpBiz(detected);
       setYelpLog(yLog); setYelpShot(yShot);
       setTtLog(tLog); setTtShot(tShot);
+      setClLog(cLog); setClShot(cShot);
+      setFbLog(fLog); setFbShot(fShot);
       setPollerLog(pLog); setSnapshot(snap);
     };
     tick();
     const t = setInterval(tick, 5_000);
     return () => { cancelled = true; clearInterval(t); };
-  }, [hasToken, showYelpShot, showTtShot]);
+  }, [hasToken, showYelpShot, showTtShot, showClShot, showFbShot]);
 
   async function onSave(): Promise<void> {
     const token = tokenInput.trim();
@@ -92,10 +113,14 @@ export default function App(): React.JSX.Element {
   async function onDisconnect(source: Source): Promise<void> {
     setBusy(source);
     if (source === 'yelp') await window.api.watcher.yelpStop();
-    else await window.api.watcher.thumbtackStop();
+    else if (source === 'thumbtack') await window.api.watcher.thumbtackStop();
+    else if (source === 'craigslist') await window.api.watcher.craigslistStop();
+    else await window.api.watcher.facebookStop();
     await window.api.chrome.stop(source);
     setBusy(null);
   }
+
+  const parseList = (s: string): string[] => s.split(/[,\n]/).map((x) => x.trim()).filter(Boolean);
 
   async function onStartWatch(source: Source): Promise<void> {
     setBusy(source);
@@ -104,9 +129,18 @@ export default function App(): React.JSX.Element {
       const r = await window.api.watcher.yelpStart();
       if (!r.ok) alert('Yelp watcher failed: ' + r.error);
       else if (r.bizEncid) setYelpBiz(r.bizEncid);
-    } else {
+    } else if (source === 'thumbtack') {
       const r = await window.api.watcher.thumbtackStart();
       if (!r.ok) alert('Thumbtack watcher failed: ' + r.error);
+    } else if (source === 'craigslist') {
+      const r = await window.api.watcher.craigslistStart({
+        city: clCity.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\.craigslist\.org.*$/, ''),
+        keywords: parseList(clKeywords), category: 'ggg',
+      });
+      if (!r.ok) alert('Craigslist watcher failed: ' + r.error);
+    } else {
+      const r = await window.api.watcher.facebookStart({ groupUrls: parseList(fbGroups), keywords: parseList(fbKeywords) });
+      if (!r.ok) alert('Facebook watcher failed: ' + r.error);
     }
     setBusy(null);
   }
@@ -131,6 +165,8 @@ export default function App(): React.JSX.Element {
 
   const yelpChrome = chromes.find((c) => c.platform === 'yelp');
   const ttChrome = chromes.find((c) => c.platform === 'thumbtack');
+  const clChrome = chromes.find((c) => c.platform === 'craigslist');
+  const fbChrome = chromes.find((c) => c.platform === 'facebook');
 
   return (
     <Shell>
@@ -191,6 +227,70 @@ export default function App(): React.JSX.Element {
         showPreview={showTtShot}
         onTogglePreview={() => setShowTtShot((v) => !v)}
         screenshot={ttShot}
+      />
+
+      <SourceCard
+        name="Craigslist gigs"
+        running={!!clChrome?.running}
+        hidden={!!clChrome?.hidden}
+        watcherStatus={watcher?.craigslist}
+        busy={busy === 'craigslist'}
+        loginHint="No login needed — searches your local gigs section for posts matching your keywords and pulls out phone numbers / relay emails. Checks every 5 minutes."
+        extra={
+          <div className="cfg">
+            <input className="input small" placeholder="City subdomain — e.g. losangeles (from losangeles.craigslist.org)"
+                   value={clCity} onChange={(e) => setClCity(e.target.value)} />
+            <input className="input small" placeholder="Keywords, comma-separated — e.g. drywall, remodel, handyman, painting"
+                   value={clKeywords} onChange={(e) => setClKeywords(e.target.value)} />
+          </div>
+        }
+        onConnect={() => onConnect('craigslist')}
+        onDisconnect={() => onDisconnect('craigslist')}
+        onStartWatch={() => onStartWatch('craigslist')}
+        onStopWatch={() => window.api.watcher.craigslistStop()}
+        onShowWindow={() => window.api.chrome.show('craigslist')}
+        onHide={() => window.api.chrome.hide('craigslist')}
+        onPollNow={async () => {
+          const r = await window.api.watcher.craigslistPollNow();
+          if (r.ok) alert(`Polled: ${r.ingested} new post(s) ingested of ${r.total} matching.`);
+          else alert(`Poll failed: ${r.error}`);
+        }}
+        log={clLog}
+        showPreview={showClShot}
+        onTogglePreview={() => setShowClShot((v) => !v)}
+        screenshot={clShot}
+      />
+
+      <SourceCard
+        name="Facebook Groups (notify-only)"
+        running={!!fbChrome?.running}
+        hidden={!!fbChrome?.hidden}
+        watcherStatus={watcher?.facebook}
+        busy={busy === 'facebook'}
+        loginHint="Log into facebook.com once in the opened Chrome. We watch your groups for matching posts and ping you — we NEVER post, comment, or DM from your account. You reply as yourself."
+        extra={
+          <div className="cfg">
+            <textarea className="input small" rows={2} placeholder={'Group URLs, one per line — e.g. https://www.facebook.com/groups/pasadenaneighbors'}
+                      value={fbGroups} onChange={(e) => setFbGroups(e.target.value)} />
+            <input className="input small" placeholder="Keywords, comma-separated — e.g. recommend, contractor, remodel, quote"
+                   value={fbKeywords} onChange={(e) => setFbKeywords(e.target.value)} />
+          </div>
+        }
+        onConnect={() => onConnect('facebook')}
+        onDisconnect={() => onDisconnect('facebook')}
+        onStartWatch={() => onStartWatch('facebook')}
+        onStopWatch={() => window.api.watcher.facebookStop()}
+        onShowWindow={() => window.api.chrome.show('facebook')}
+        onHide={() => window.api.chrome.hide('facebook')}
+        onPollNow={async () => {
+          const r = await window.api.watcher.facebookPollNow();
+          if (r.ok) alert(`Polled: ${r.ingested} matching post(s) ingested of ${r.total} seen.`);
+          else alert(`Poll failed: ${r.error}`);
+        }}
+        log={fbLog}
+        showPreview={showFbShot}
+        onTogglePreview={() => setShowFbShot((v) => !v)}
+        screenshot={fbShot}
       />
 
       <ReplyQueueCard poller={watcher?.poller} log={pollerLog} />
@@ -440,6 +540,10 @@ p { margin: 4px 0 12px; }
 .tag { display: inline-block; min-width: 64px; text-align: center; padding: 1px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; background: #1f2530; color: #94a3b8; }
 .tag.yelp { background: #2a1411; color: #fb7185; }
 .tag.thumbtack { background: #0d1f2a; color: #38bdf8; }
+.tag.craigslist { background: #1d142a; color: #c084fc; }
+.tag.facebook { background: #0d162a; color: #60a5fa; }
+.cfg { display: flex; flex-direction: column; margin-top: 8px; }
+.cfg .input { margin: 4px 0; font-family: inherit; resize: vertical; }
 .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; margin-top: 10px; }
 .stat { background: #0f1318; border: 1px solid #2a2f3a; border-radius: 6px; padding: 8px 10px; }
 .stat-num { font-size: 20px; font-weight: 700; line-height: 1; }

@@ -1,7 +1,15 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { electronAPI } from '@electron-toolkit/preload';
 
-type Source = 'yelp' | 'thumbtack';
+type Source = 'yelp' | 'thumbtack' | 'craigslist' | 'facebook';
+
+export interface CraigslistConfig { city: string; keywords: string[]; category: string }
+export interface FacebookConfig { groupUrls: string[]; keywords: string[] }
+
+type WatchStart = { ok: true; hidden?: boolean } | { ok: false; error: string };
+type PollNow = { ok: true; ingested: number; total: number } | { ok: false; error: string };
+type WatchLog = Array<{ at: number; ingested: number; total: number; note?: string }>;
+type Shot = { at: number; b64: string } | null;
 
 const api = {
   auth: {
@@ -43,9 +51,23 @@ const api = {
     thumbtackPollNow: () => ipcRenderer.invoke('watcher:thumbtack:poll-now') as Promise<{ ok: true; ingested: number; total: number } | { ok: false; error: string }>,
     thumbtackLog: () => ipcRenderer.invoke('watcher:thumbtack:log') as Promise<Array<{ at: number; ingested: number; total: number; note?: string }>>,
     thumbtackScreenshot: () => ipcRenderer.invoke('watcher:thumbtack:screenshot') as Promise<{ at: number; b64: string } | null>,
+    craigslistGetConfig: () => ipcRenderer.invoke('watcher:craigslist:get-config') as Promise<CraigslistConfig | null>,
+    craigslistStart: (cfg: CraigslistConfig) => ipcRenderer.invoke('watcher:craigslist:start', cfg) as Promise<WatchStart>,
+    craigslistStop: () => ipcRenderer.invoke('watcher:craigslist:stop') as Promise<void>,
+    craigslistPollNow: () => ipcRenderer.invoke('watcher:craigslist:poll-now') as Promise<PollNow>,
+    craigslistLog: () => ipcRenderer.invoke('watcher:craigslist:log') as Promise<WatchLog>,
+    craigslistScreenshot: () => ipcRenderer.invoke('watcher:craigslist:screenshot') as Promise<Shot>,
+    facebookGetConfig: () => ipcRenderer.invoke('watcher:facebook:get-config') as Promise<FacebookConfig | null>,
+    facebookStart: (cfg: FacebookConfig) => ipcRenderer.invoke('watcher:facebook:start', cfg) as Promise<WatchStart>,
+    facebookStop: () => ipcRenderer.invoke('watcher:facebook:stop') as Promise<void>,
+    facebookPollNow: () => ipcRenderer.invoke('watcher:facebook:poll-now') as Promise<PollNow>,
+    facebookLog: () => ipcRenderer.invoke('watcher:facebook:log') as Promise<WatchLog>,
+    facebookScreenshot: () => ipcRenderer.invoke('watcher:facebook:screenshot') as Promise<Shot>,
     status: () => ipcRenderer.invoke('watcher:status') as Promise<{
       yelp: { status: string; lastTick?: number; lastError?: string };
       thumbtack: { status: string; lastTick?: number; lastError?: string };
+      craigslist: { status: string; lastTick?: number; lastError?: string };
+      facebook: { status: string; lastTick?: number; lastError?: string };
       poller: { status: string; lastTick?: number; lastError?: string; sentCount: number; failedCount: number; pendingCount: number };
     }>,
   },
