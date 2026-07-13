@@ -26,6 +26,8 @@ export class FacebookWatcher {
   private timer: NodeJS.Timeout | null = null;
   private running = false;
   private config: FacebookConfig | null = null;
+  // Post ids the cloud pre-filter marked as obvious spam — never ingested at all.
+  private dropped = new Set<string>();
   readonly cdpPort: number;
   status: 'idle' | 'connecting' | 'watching' | 'error' = 'idle';
   lastError?: string;
@@ -145,8 +147,27 @@ export class FacebookWatcher {
         } catch { /* non-fatal */ }
 
         const known = await knownLeadIds('facebook').catch(() => new Set<string>());
-        const fresh = [...matched.values()].filter((p) => !known.has(p.id)).slice(0, INGEST_CAP);
-        for (const p of fresh) {
+        const candidates = [...matched.values()].filter((p) => !known.has(p.id) && !this.dropped.has(p.id));
+
+        // Pre-filter on the cloud with the post text (we already have it) — obvious ad/spam
+        // posts are dropped before they ever become CRM leads.
+        let fresh = candidates;
+        if (candidates.length) {
+          try {
+            const r = await cloudFetch('/api/agent/prequalify', {
+              method: 'POST',
+              body: JSON.stringify({ items: candidates.slice(0, 60).map((p) => ({ id: p.id, text: p.text.slice(0, 400) })) }),
+            });
+            if (r.ok) {
+              const { drop } = (await r.json()) as { keep: string[]; drop: string[] };
+              for (const id of drop) this.dropped.add(id);
+              fresh = candidates.filter((p) => !this.dropped.has(p.id));
+              if (drop.length) this.log.unshift({ at: Date.now(), ingested: 0, total: totalSeen, note: `prefiltered ${drop.length} ad(s)` });
+            }
+          } catch { /* prefilter down → ingest-time qualifier still catches spam */ }
+        }
+
+        for (const p of fresh.slice(0, INGEST_CAP)) {
           // Notify-only lead: no phone/email/reply channel, so no automation can fire — the
           // cloud's new-lead notification is the product here.
           try {

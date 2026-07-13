@@ -27,6 +27,9 @@ export class CraigslistWatcher {
   private timer: NodeJS.Timeout | null = null;
   private running = false;
   private config: CraigslistConfig | null = null;
+  // Post ids the cloud pre-filter marked as obvious spam — never re-checked this session,
+  // and never ingested, so they don't clutter the CRM at all.
+  private dropped = new Set<string>();
   readonly cdpPort: number;
   status: 'idle' | 'connecting' | 'watching' | 'error' = 'idle';
   lastError?: string;
@@ -132,8 +135,28 @@ export class CraigslistWatcher {
         } catch { /* non-fatal */ }
 
         const known = await knownLeadIds('craigslist').catch(() => new Set<string>());
-        const fresh = [...hits.values()].filter((h) => !known.has(h.id)).slice(0, INGEST_CAP);
-        for (const h of fresh) {
+        const candidates = [...hits.values()].filter((h) => !known.has(h.id) && !this.dropped.has(h.id));
+
+        // Pre-filter by title on the cloud (one batched Haiku call): unmistakable
+        // recruiting/ad spam is dropped here and never opened or ingested. Ambiguous titles
+        // pass through — the full-body qualifier at ingest makes the final call.
+        let fresh = candidates;
+        if (candidates.length) {
+          try {
+            const r = await cloudFetch('/api/agent/prequalify', {
+              method: 'POST',
+              body: JSON.stringify({ items: candidates.slice(0, 60).map((h) => ({ id: h.id, text: h.title })) }),
+            });
+            if (r.ok) {
+              const { drop } = (await r.json()) as { keep: string[]; drop: string[] };
+              for (const id of drop) this.dropped.add(id);
+              fresh = candidates.filter((h) => !this.dropped.has(h.id));
+              if (drop.length) this.log.unshift({ at: Date.now(), ingested: 0, total: hits.size, note: `prefiltered ${drop.length} ad(s) by title` });
+            }
+          } catch { /* prefilter down → ingest-time qualifier still catches spam */ }
+        }
+
+        for (const h of fresh.slice(0, INGEST_CAP)) {
           try { await this.ingestPost(page, h, cfg); ingested++; } catch { /* skip one */ }
         }
       } finally {
